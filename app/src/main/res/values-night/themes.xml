@@ -3,7 +3,7 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:navigationBarColor">#111827</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:colorAccent">#60A5FA</item>
