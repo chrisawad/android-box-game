@@ -10,8 +10,8 @@ enum class EdgeOrientation {
 }
 
 enum class PlayerId {
-    Red,
-    Blue,
+    Player1,
+    Player2,
 }
 
 enum class PlayerColor(
@@ -58,9 +58,9 @@ data class BoxCell(
 }
 
 data class BoxGameState(
-    val redPlayer: Player,
-    val bluePlayer: Player,
-    val currentPlayerId: PlayerId = PlayerId.Red,
+    val player1: Player,
+    val player2: Player,
+    val currentPlayerId: PlayerId = PlayerId.Player1,
     val lines: Map<Edge, PlayerId> = emptyMap(),
     val boxes: Map<BoxCell, PlayerId> = emptyMap(),
 ) {
@@ -70,26 +70,26 @@ data class BoxGameState(
     val isGameOver: Boolean
         get() = lines.size == TotalLineCount
 
-    val redScore: Int
-        get() = boxes.count { it.value == PlayerId.Red }
+    val player1Score: Int
+        get() = boxes.count { it.value == PlayerId.Player1 }
 
-    val blueScore: Int
-        get() = boxes.count { it.value == PlayerId.Blue }
+    val player2Score: Int
+        get() = boxes.count { it.value == PlayerId.Player2 }
 
     val winner: PlayerId?
         get() = when {
             !isGameOver -> null
-            redScore > blueScore -> PlayerId.Red
-            blueScore > redScore -> PlayerId.Blue
+            player1Score > player2Score -> PlayerId.Player1
+            player2Score > player1Score -> PlayerId.Player2
             else -> null
         }
 
     val isTie: Boolean
-        get() = isGameOver && redScore == blueScore
+        get() = isGameOver && player1Score == player2Score
 
     fun player(playerId: PlayerId): Player = when (playerId) {
-        PlayerId.Red -> redPlayer
-        PlayerId.Blue -> bluePlayer
+        PlayerId.Player1 -> player1
+        PlayerId.Player2 -> player2
     }
 
     fun placeLine(edge: Edge): BoxGameState {
@@ -135,21 +135,21 @@ data class BoxGameState(
 
     companion object {
         fun newGame(
-            redInitials: String,
-            blueInitials: String,
-            redColor: PlayerColor = PlayerColor.Red,
-            blueColor: PlayerColor = PlayerColor.Blue,
+            player1Initials: String,
+            player2Initials: String,
+            player1Color: PlayerColor = PlayerColor.Red,
+            player2Color: PlayerColor = PlayerColor.Blue,
         ): BoxGameState =
             BoxGameState(
-                redPlayer = Player(PlayerId.Red, normalizeInitials(redInitials), redColor),
-                bluePlayer = Player(PlayerId.Blue, normalizeInitials(blueInitials), blueColor),
+                player1 = Player(PlayerId.Player1, normalizeInitials(player1Initials), player1Color),
+                player2 = Player(PlayerId.Player2, normalizeInitials(player2Initials), player2Color),
             )
     }
 }
 
 fun PlayerId.next(): PlayerId = when (this) {
-    PlayerId.Red -> PlayerId.Blue
-    PlayerId.Blue -> PlayerId.Red
+    PlayerId.Player1 -> PlayerId.Player2
+    PlayerId.Player2 -> PlayerId.Player1
 }
 
 fun allEdges(): List<Edge> =

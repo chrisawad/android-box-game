@@ -11,19 +11,19 @@ class BoxGameStateTest {
     fun redPlayerAlwaysStarts() {
         val state = BoxGameState.newGame("rd", "bl")
 
-        assertEquals(PlayerId.Red, state.currentPlayerId)
-        assertEquals("RD", state.redPlayer.initials)
-        assertEquals("BL", state.bluePlayer.initials)
-        assertEquals(PlayerColor.Red, state.redPlayer.color)
-        assertEquals(PlayerColor.Blue, state.bluePlayer.color)
+        assertEquals(PlayerId.Player1, state.currentPlayerId)
+        assertEquals("RD", state.player1.initials)
+        assertEquals("BL", state.player2.initials)
+        assertEquals(PlayerColor.Red, state.player1.color)
+        assertEquals(PlayerColor.Blue, state.player2.color)
     }
 
     @Test
     fun newGameStoresSelectedPlayerColors() {
         val state = BoxGameState.newGame("R", "B", PlayerColor.Green, PlayerColor.Purple)
 
-        assertEquals(PlayerColor.Green, state.redPlayer.color)
-        assertEquals(PlayerColor.Purple, state.bluePlayer.color)
+        assertEquals(PlayerColor.Green, state.player1.color)
+        assertEquals(PlayerColor.Purple, state.player2.color)
     }
 
     @Test
@@ -31,7 +31,7 @@ class BoxGameStateTest {
         val afterMove = BoxGameState.newGame("R", "B")
             .placeLine(h(0, 0))
 
-        assertEquals(PlayerId.Blue, afterMove.currentPlayerId)
+        assertEquals(PlayerId.Player2, afterMove.currentPlayerId)
         assertTrue(afterMove.boxes.isEmpty())
     }
 
@@ -39,38 +39,38 @@ class BoxGameStateTest {
     fun completingAOneByOneBoxClaimsItAndKeepsTurn() {
         val nearlyClosed = BoxGameState.newGame("R", "B").copy(
             lines = mapOf(
-                h(0, 0) to PlayerId.Red,
-                v(0, 0) to PlayerId.Blue,
-                v(0, 1) to PlayerId.Red,
+                h(0, 0) to PlayerId.Player1,
+                v(0, 0) to PlayerId.Player2,
+                v(0, 1) to PlayerId.Player1,
             ),
         )
 
         val afterMove = nearlyClosed.placeLine(h(1, 0))
 
-        assertEquals(PlayerId.Red, afterMove.boxes[BoxCell(0, 0)])
-        assertEquals(PlayerId.Red, afterMove.currentPlayerId)
-        assertEquals(1, afterMove.redScore)
-        assertEquals(0, afterMove.blueScore)
+        assertEquals(PlayerId.Player1, afterMove.boxes[BoxCell(0, 0)])
+        assertEquals(PlayerId.Player1, afterMove.currentPlayerId)
+        assertEquals(1, afterMove.player1Score)
+        assertEquals(0, afterMove.player2Score)
     }
 
     @Test
     fun sharedLineCanClaimTwoSeparateOneByOneBoxes() {
         val nearlyClosed = BoxGameState.newGame("R", "B").copy(
             lines = mapOf(
-                h(0, 0) to PlayerId.Blue,
-                v(0, 0) to PlayerId.Red,
-                v(0, 1) to PlayerId.Blue,
-                h(2, 0) to PlayerId.Red,
-                v(1, 0) to PlayerId.Blue,
-                v(1, 1) to PlayerId.Red,
+                h(0, 0) to PlayerId.Player2,
+                v(0, 0) to PlayerId.Player1,
+                v(0, 1) to PlayerId.Player2,
+                h(2, 0) to PlayerId.Player1,
+                v(1, 0) to PlayerId.Player2,
+                v(1, 1) to PlayerId.Player1,
             ),
         )
 
         val afterMove = nearlyClosed.placeLine(h(1, 0))
 
-        assertEquals(PlayerId.Red, afterMove.boxes[BoxCell(0, 0)])
-        assertEquals(PlayerId.Red, afterMove.boxes[BoxCell(1, 0)])
-        assertEquals(2, afterMove.redScore)
+        assertEquals(PlayerId.Player1, afterMove.boxes[BoxCell(0, 0)])
+        assertEquals(PlayerId.Player1, afterMove.boxes[BoxCell(1, 0)])
+        assertEquals(2, afterMove.player1Score)
     }
 
     @Test
@@ -93,17 +93,17 @@ class BoxGameStateTest {
             }
         }
         val boxes = cells.mapIndexed { index, cell ->
-            cell to if (index < 9) PlayerId.Red else PlayerId.Blue
+            cell to if (index < 9) PlayerId.Player1 else PlayerId.Player2
         }.toMap()
         val fullBoard = BoxGameState.newGame("R", "B").copy(
-            lines = allEdges().associateWith { PlayerId.Red },
+            lines = allEdges().associateWith { PlayerId.Player1 },
             boxes = boxes,
         )
 
         assertTrue(fullBoard.isGameOver)
-        assertEquals(PlayerId.Red, fullBoard.winner)
-        assertEquals(9, fullBoard.redScore)
-        assertEquals(7, fullBoard.blueScore)
+        assertEquals(PlayerId.Player1, fullBoard.winner)
+        assertEquals(9, fullBoard.player1Score)
+        assertEquals(7, fullBoard.player2Score)
     }
 
     @Test
@@ -116,10 +116,10 @@ class BoxGameStateTest {
             }
         }
         val boxes = cells.mapIndexed { index, cell ->
-            cell to if (index < 8) PlayerId.Red else PlayerId.Blue
+            cell to if (index < 8) PlayerId.Player1 else PlayerId.Player2
         }.toMap()
         val fullBoard = BoxGameState.newGame("R", "B").copy(
-            lines = allEdges().associateWith { PlayerId.Red },
+            lines = allEdges().associateWith { PlayerId.Player1 },
             boxes = boxes,
         )
 

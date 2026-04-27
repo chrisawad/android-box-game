@@ -124,10 +124,10 @@ private fun BoxGameTheme(content: @Composable () -> Unit) {
 
 @Composable
 private fun BoxGameApp() {
-    var redInitials by rememberSaveable { mutableStateOf("") }
-    var blueInitials by rememberSaveable { mutableStateOf("") }
-    var redColor by rememberSaveable { mutableStateOf(PlayerColor.Red) }
-    var blueColor by rememberSaveable { mutableStateOf(PlayerColor.Blue) }
+    var player1Initials by rememberSaveable { mutableStateOf("") }
+    var player2Initials by rememberSaveable { mutableStateOf("") }
+    var player1Color by rememberSaveable { mutableStateOf(PlayerColor.Red) }
+    var player2Color by rememberSaveable { mutableStateOf(PlayerColor.Blue) }
     var gameState by remember { mutableStateOf<BoxGameState?>(null) }
 
     Surface(
@@ -137,28 +137,28 @@ private fun BoxGameApp() {
         val state = gameState
         if (state == null) {
             SetupScreen(
-                redInitials = redInitials,
-                blueInitials = blueInitials,
-                redColor = redColor,
-                blueColor = blueColor,
-                onRedInitialsChange = { redInitials = normalizeInitials(it) },
-                onBlueInitialsChange = { blueInitials = normalizeInitials(it) },
-                onRedColorChange = { color ->
-                    val previousColor = redColor
-                    redColor = color
-                    if (blueColor == color) {
-                        blueColor = previousColor
+                player1Initials = player1Initials,
+                player2Initials = player2Initials,
+                player1Color = player1Color,
+                player2Color = player2Color,
+                onPlayer1InitialsChange = { player1Initials = normalizeInitials(it) },
+                onPlayer2InitialsChange = { player2Initials = normalizeInitials(it) },
+                onPlayer1ColorChange = { color ->
+                    val previousColor = player1Color
+                    player1Color = color
+                    if (player2Color == color) {
+                        player2Color = previousColor
                     }
                 },
-                onBlueColorChange = { color ->
-                    val previousColor = blueColor
-                    blueColor = color
-                    if (redColor == color) {
-                        redColor = previousColor
+                onPlayer2ColorChange = { color ->
+                    val previousColor = player2Color
+                    player2Color = color
+                    if (player1Color == color) {
+                        player1Color = previousColor
                     }
                 },
                 onStart = {
-                    gameState = BoxGameState.newGame(redInitials, blueInitials, redColor, blueColor)
+                    gameState = BoxGameState.newGame(player1Initials, player2Initials, player1Color, player2Color)
                 },
             )
         } else {
@@ -169,17 +169,17 @@ private fun BoxGameApp() {
                 },
                 onPlayAgain = {
                     gameState = BoxGameState.newGame(
-                        state.redPlayer.initials,
-                        state.bluePlayer.initials,
-                        state.redPlayer.color,
-                        state.bluePlayer.color,
+                        state.player1.initials,
+                        state.player2.initials,
+                        state.player1.color,
+                        state.player2.color,
                     )
                 },
                 onChangePlayers = {
-                    redInitials = state.redPlayer.initials
-                    blueInitials = state.bluePlayer.initials
-                    redColor = state.redPlayer.color
-                    blueColor = state.bluePlayer.color
+                    player1Initials = state.player1.initials
+                    player2Initials = state.player2.initials
+                    player1Color = state.player1.color
+                    player2Color = state.player2.color
                     gameState = null
                 },
             )
@@ -190,18 +190,18 @@ private fun BoxGameApp() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SetupScreen(
-    redInitials: String,
-    blueInitials: String,
-    redColor: PlayerColor,
-    blueColor: PlayerColor,
-    onRedInitialsChange: (String) -> Unit,
-    onBlueInitialsChange: (String) -> Unit,
-    onRedColorChange: (PlayerColor) -> Unit,
-    onBlueColorChange: (PlayerColor) -> Unit,
+    player1Initials: String,
+    player2Initials: String,
+    player1Color: PlayerColor,
+    player2Color: PlayerColor,
+    onPlayer1InitialsChange: (String) -> Unit,
+    onPlayer2InitialsChange: (String) -> Unit,
+    onPlayer1ColorChange: (PlayerColor) -> Unit,
+    onPlayer2ColorChange: (PlayerColor) -> Unit,
     onStart: () -> Unit,
 ) {
-    val redComposeColor = redColor.toComposeColor()
-    val blueComposeColor = blueColor.toComposeColor()
+    val player1ComposeColor = player1Color.toComposeColor()
+    val player2ComposeColor = player2Color.toComposeColor()
 
     Column(
         modifier = Modifier
@@ -227,35 +227,35 @@ private fun SetupScreen(
             fontWeight = FontWeight.SemiBold,
         )
         InitialsField(
-            value = redInitials,
-            onValueChange = onRedInitialsChange,
+            value = player1Initials,
+            onValueChange = onPlayer1InitialsChange,
             label = "Player 1",
-            color = redComposeColor,
+            color = player1ComposeColor,
         )
         Spacer(modifier = Modifier.height(10.dp))
         PlayerColorPicker(
-            selectedColor = redColor,
-            onColorSelected = onRedColorChange,
+            selectedColor = player1Color,
+            onColorSelected = onPlayer1ColorChange,
         )
         Spacer(modifier = Modifier.height(18.dp))
         InitialsField(
-            value = blueInitials,
-            onValueChange = onBlueInitialsChange,
+            value = player2Initials,
+            onValueChange = onPlayer2InitialsChange,
             label = "Player 2",
-            color = blueComposeColor,
+            color = player2ComposeColor,
         )
         Spacer(modifier = Modifier.height(10.dp))
         PlayerColorPicker(
-            selectedColor = blueColor,
-            onColorSelected = onBlueColorChange,
+            selectedColor = player2Color,
+            onColorSelected = onPlayer2ColorChange,
         )
         Spacer(modifier = Modifier.height(28.dp))
         Button(
             onClick = onStart,
-            enabled = redInitials.isNotBlank() && blueInitials.isNotBlank(),
+            enabled = player1Initials.isNotBlank() && player2Initials.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
-                containerColor = redComposeColor,
+                containerColor = player1ComposeColor,
                 contentColor = Color.White,
             ),
             shape = RoundedCornerShape(8.dp),
@@ -388,15 +388,15 @@ private fun GameScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             PlayerScorePanel(
-                player = state.redPlayer,
-                score = state.redScore,
-                isCurrent = state.currentPlayerId == PlayerId.Red && !state.isGameOver,
+                player = state.player1,
+                score = state.player1Score,
+                isCurrent = state.currentPlayerId == PlayerId.Player1 && !state.isGameOver,
                 modifier = Modifier.weight(1f),
             )
             PlayerScorePanel(
-                player = state.bluePlayer,
-                score = state.blueScore,
-                isCurrent = state.currentPlayerId == PlayerId.Blue && !state.isGameOver,
+                player = state.player2,
+                score = state.player2Score,
+                isCurrent = state.currentPlayerId == PlayerId.Player2 && !state.isGameOver,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -491,7 +491,7 @@ private fun StatusPanel(
 
     val statusText = when {
         state.isTie -> "Tie game"
-        state.isGameOver -> "${state.player(state.winner ?: PlayerId.Red).initials} wins"
+        state.isGameOver -> "${state.player(state.winner ?: PlayerId.Player1).initials} wins"
         else -> "${state.currentPlayer.initials}'s turn"
     }
 
@@ -683,8 +683,8 @@ private fun Offset.distanceTo(other: Offset): Float {
 private fun PlayerColor.toComposeColor(): Color = Color(argb)
 
 private fun PlayerId.playerLabel(): String = when (this) {
-    PlayerId.Red -> "Player 1"
-    PlayerId.Blue -> "Player 2"
+    PlayerId.Player1 -> "Player 1"
+    PlayerId.Player2 -> "Player 2"
 }
 
 @Preview(showBackground = true)
