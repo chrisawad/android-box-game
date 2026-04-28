@@ -1,8 +1,9 @@
 package com.example.boxgame
 
-const val DotCount = 5
-const val BoxCount = DotCount - 1
-const val TotalLineCount = DotCount * BoxCount * 2
+const val DefaultBoardColumns = 4
+const val DefaultBoardRows = 4
+const val MinBoardBoxes = 4
+const val MaxBoardBoxes = 10
 
 enum class EdgeOrientation {
     Horizontal,
@@ -24,6 +25,38 @@ enum class PlayerColor(
     Purple("Purple", 0xFF7E22CE),
     Orange("Orange", 0xFFEA580C),
     Pink("Pink", 0xFFBE185D),
+    Teal("Teal", 0xFF0F766E),
+    Cyan("Cyan", 0xFF0891B2),
+    Indigo("Indigo", 0xFF4338CA),
+    Lime("Lime", 0xFF65A30D),
+    Amber("Amber", 0xFFD97706),
+    Slate("Slate", 0xFF475569),
+}
+
+data class BoardSize(
+    val columns: Int,
+    val rows: Int,
+) {
+    init {
+        require(columns in MinBoardBoxes..MaxBoardBoxes) {
+            "Board columns must be between $MinBoardBoxes and $MaxBoardBoxes"
+        }
+        require(rows in MinBoardBoxes..MaxBoardBoxes) {
+            "Board rows must be between $MinBoardBoxes and $MaxBoardBoxes"
+        }
+    }
+
+    val dotColumns: Int
+        get() = columns + 1
+
+    val dotRows: Int
+        get() = rows + 1
+
+    val boxCount: Int
+        get() = columns * rows
+
+    val totalLineCount: Int
+        get() = dotRows * columns + rows * dotColumns
 }
 
 data class Player(
@@ -37,29 +70,22 @@ data class Edge(
     val row: Int,
     val column: Int,
 ) {
-    init {
-        val valid = when (orientation) {
-            EdgeOrientation.Horizontal -> row in 0 until DotCount && column in 0 until BoxCount
-            EdgeOrientation.Vertical -> row in 0 until BoxCount && column in 0 until DotCount
+    fun isValidFor(boardSize: BoardSize): Boolean =
+        when (orientation) {
+            EdgeOrientation.Horizontal -> row in 0 until boardSize.dotRows && column in 0 until boardSize.columns
+            EdgeOrientation.Vertical -> row in 0 until boardSize.rows && column in 0 until boardSize.dotColumns
         }
-        require(valid) { "Invalid $orientation edge at row=$row column=$column" }
-    }
 }
 
 data class BoxCell(
     val row: Int,
     val column: Int,
-) {
-    init {
-        require(row in 0 until BoxCount && column in 0 until BoxCount) {
-            "Invalid box cell at row=$row column=$column"
-        }
-    }
-}
+)
 
 data class BoxGameState(
     val player1: Player,
     val player2: Player,
+    val boardSize: BoardSize = BoardSize(DefaultBoardColumns, DefaultBoardRows),
     val currentPlayerId: PlayerId = PlayerId.Player1,
     val lines: Map<Edge, PlayerId> = emptyMap(),
     val boxes: Map<BoxCell, PlayerId> = emptyMap(),
@@ -68,7 +94,7 @@ data class BoxGameState(
         get() = player(currentPlayerId)
 
     val isGameOver: Boolean
-        get() = lines.size == TotalLineCount
+        get() = lines.size == boardSize.totalLineCount
 
     val player1Score: Int
         get() = boxes.count { it.value == PlayerId.Player1 }
@@ -93,7 +119,7 @@ data class BoxGameState(
     }
 
     fun placeLine(edge: Edge): BoxGameState {
-        if (edge in lines || isGameOver) return this
+        if (!edge.isValidFor(boardSize) || edge in lines || isGameOver) return this
 
         val updatedLines = lines + (edge to currentPlayerId)
         val newlyCompletedBoxes = adjacentBoxes(edge)
@@ -131,7 +157,7 @@ data class BoxGameState(
     }
 
     private fun boxOrNull(row: Int, column: Int): BoxCell? =
-        if (row in 0 until BoxCount && column in 0 until BoxCount) BoxCell(row, column) else null
+        if (row in 0 until boardSize.rows && column in 0 until boardSize.columns) BoxCell(row, column) else null
 
     companion object {
         fun newGame(
@@ -139,10 +165,12 @@ data class BoxGameState(
             player2Initials: String,
             player1Color: PlayerColor = PlayerColor.Red,
             player2Color: PlayerColor = PlayerColor.Blue,
+            boardSize: BoardSize = BoardSize(DefaultBoardColumns, DefaultBoardRows),
         ): BoxGameState =
             BoxGameState(
                 player1 = Player(PlayerId.Player1, normalizeInitials(player1Initials), player1Color),
                 player2 = Player(PlayerId.Player2, normalizeInitials(player2Initials), player2Color),
+                boardSize = boardSize,
             )
     }
 }
@@ -152,15 +180,15 @@ fun PlayerId.next(): PlayerId = when (this) {
     PlayerId.Player2 -> PlayerId.Player1
 }
 
-fun allEdges(): List<Edge> =
+fun allEdges(boardSize: BoardSize = BoardSize(DefaultBoardColumns, DefaultBoardRows)): List<Edge> =
     buildList {
-        repeat(DotCount) { row ->
-            repeat(BoxCount) { column ->
+        repeat(boardSize.dotRows) { row ->
+            repeat(boardSize.columns) { column ->
                 add(Edge(EdgeOrientation.Horizontal, row, column))
             }
         }
-        repeat(BoxCount) { row ->
-            repeat(DotCount) { column ->
+        repeat(boardSize.rows) { row ->
+            repeat(boardSize.dotColumns) { column ->
                 add(Edge(EdgeOrientation.Vertical, row, column))
             }
         }

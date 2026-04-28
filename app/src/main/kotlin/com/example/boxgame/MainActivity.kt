@@ -13,6 +13,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +46,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -128,6 +132,8 @@ private fun BoxGameApp() {
     var player2Initials by rememberSaveable { mutableStateOf("") }
     var player1Color by rememberSaveable { mutableStateOf(PlayerColor.Red) }
     var player2Color by rememberSaveable { mutableStateOf(PlayerColor.Blue) }
+    var boardColumns by rememberSaveable { mutableIntStateOf(DefaultBoardColumns) }
+    var boardRows by rememberSaveable { mutableIntStateOf(DefaultBoardRows) }
     var gameState by remember { mutableStateOf<BoxGameState?>(null) }
 
     Surface(
@@ -141,6 +147,8 @@ private fun BoxGameApp() {
                 player2Initials = player2Initials,
                 player1Color = player1Color,
                 player2Color = player2Color,
+                boardColumns = boardColumns,
+                boardRows = boardRows,
                 onPlayer1InitialsChange = { player1Initials = normalizeInitials(it) },
                 onPlayer2InitialsChange = { player2Initials = normalizeInitials(it) },
                 onPlayer1ColorChange = { color ->
@@ -157,8 +165,16 @@ private fun BoxGameApp() {
                         player1Color = previousColor
                     }
                 },
+                onBoardColumnsChange = { boardColumns = it },
+                onBoardRowsChange = { boardRows = it },
                 onStart = {
-                    gameState = BoxGameState.newGame(player1Initials, player2Initials, player1Color, player2Color)
+                    gameState = BoxGameState.newGame(
+                        player1Initials,
+                        player2Initials,
+                        player1Color,
+                        player2Color,
+                        BoardSize(boardColumns, boardRows),
+                    )
                 },
             )
         } else {
@@ -173,6 +189,7 @@ private fun BoxGameApp() {
                         state.player2.initials,
                         state.player1.color,
                         state.player2.color,
+                        state.boardSize,
                     )
                 },
                 onChangePlayers = {
@@ -180,6 +197,8 @@ private fun BoxGameApp() {
                     player2Initials = state.player2.initials
                     player1Color = state.player1.color
                     player2Color = state.player2.color
+                    boardColumns = state.boardSize.columns
+                    boardRows = state.boardSize.rows
                     gameState = null
                 },
             )
@@ -194,20 +213,26 @@ private fun SetupScreen(
     player2Initials: String,
     player1Color: PlayerColor,
     player2Color: PlayerColor,
+    boardColumns: Int,
+    boardRows: Int,
     onPlayer1InitialsChange: (String) -> Unit,
     onPlayer2InitialsChange: (String) -> Unit,
     onPlayer1ColorChange: (PlayerColor) -> Unit,
     onPlayer2ColorChange: (PlayerColor) -> Unit,
+    onBoardColumnsChange: (Int) -> Unit,
+    onBoardRowsChange: (Int) -> Unit,
     onStart: () -> Unit,
 ) {
     val player1ComposeColor = player1Color.toComposeColor()
     val player2ComposeColor = player2Color.toComposeColor()
+    var colorPickerTarget by remember { mutableStateOf<PlayerId?>(null) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -231,11 +256,7 @@ private fun SetupScreen(
             onValueChange = onPlayer1InitialsChange,
             label = "Player 1",
             color = player1ComposeColor,
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        PlayerColorPicker(
-            selectedColor = player1Color,
-            onColorSelected = onPlayer1ColorChange,
+            onColorClick = { colorPickerTarget = PlayerId.Player1 },
         )
         Spacer(modifier = Modifier.height(18.dp))
         InitialsField(
@@ -243,11 +264,14 @@ private fun SetupScreen(
             onValueChange = onPlayer2InitialsChange,
             label = "Player 2",
             color = player2ComposeColor,
+            onColorClick = { colorPickerTarget = PlayerId.Player2 },
         )
-        Spacer(modifier = Modifier.height(10.dp))
-        PlayerColorPicker(
-            selectedColor = player2Color,
-            onColorSelected = onPlayer2ColorChange,
+        Spacer(modifier = Modifier.height(22.dp))
+        BoardSizePicker(
+            columns = boardColumns,
+            rows = boardRows,
+            onColumnsChange = onBoardColumnsChange,
+            onRowsChange = onBoardRowsChange,
         )
         Spacer(modifier = Modifier.height(28.dp))
         Button(
@@ -268,6 +292,32 @@ private fun SetupScreen(
             )
         }
     }
+
+    when (colorPickerTarget) {
+        PlayerId.Player1 -> PlayerColorDialog(
+            title = "Player 1 color",
+            selectedColor = player1Color,
+            onColorSelected = {
+                onPlayer1ColorChange(it)
+                colorPickerTarget = null
+            },
+            onDismiss = { colorPickerTarget = null },
+        )
+
+        PlayerId.Player2 -> PlayerColorDialog(
+            title = "Player 2 color",
+            selectedColor = player2Color,
+            onColorSelected = {
+                onPlayer2ColorChange(it)
+                colorPickerTarget = null
+            },
+            onDismiss = { colorPickerTarget = null },
+        )
+
+        null -> Unit
+    }
+
+    print(colorPickerTarget)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -277,6 +327,7 @@ private fun InitialsField(
     onValueChange: (String) -> Unit,
     label: String,
     color: Color,
+    onColorClick: () -> Unit,
 ) {
     OutlinedTextField(
         value = value,
@@ -288,8 +339,13 @@ private fun InitialsField(
         leadingIcon = {
             Box(
                 modifier = Modifier
-                    .size(14.dp)
-                    .background(color, CircleShape),
+                    .size(28.dp)
+                    .background(color, CircleShape)
+                    .border(2.dp, Color.White, CircleShape)
+                    .clickable(onClick = onColorClick)
+                    .semantics {
+                        contentDescription = "Choose $label color"
+                    },
             )
         },
         textStyle = MaterialTheme.typography.headlineSmall.copy(
@@ -306,44 +362,175 @@ private fun InitialsField(
 }
 
 @Composable
-private fun PlayerColorPicker(
+private fun PlayerColorDialog(
+    title: String,
     selectedColor: PlayerColor,
     onColorSelected: (PlayerColor) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    Row(
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = title,
+                fontWeight = FontWeight.Black,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                PlayerColor.entries.chunked(4).forEach { rowColors ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        rowColors.forEach { option ->
+                            val isSelected = option == selectedColor
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .background(option.toComposeColor(), CircleShape)
+                                        .border(
+                                            width = if (isSelected) 3.dp else 1.dp,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                MaterialTheme.colorScheme.outlineVariant
+                                            },
+                                            shape = CircleShape,
+                                        )
+                                        .clickable { onColorSelected(option) }
+                                        .semantics {
+                                            contentDescription = "${option.label} color"
+                                            selected = isSelected
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (isSelected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(14.dp)
+                                                .background(Color.White, CircleShape),
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = option.label,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Black else FontWeight.SemiBold,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+
+                        repeat(4 - rowColors.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+        shape = RoundedCornerShape(8.dp),
+    )
+}
+
+@Composable
+private fun BoardSizePicker(
+    columns: Int,
+    rows: Int,
+    onColumnsChange: (Int) -> Unit,
+    onRowsChange: (Int) -> Unit,
+) {
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(8.dp),
     ) {
-        PlayerColor.entries.forEach { option ->
-            val isSelected = option == selectedColor
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .background(option.toComposeColor(), CircleShape)
-                    .border(
-                        width = if (isSelected) 3.dp else 1.dp,
-                        color = if (isSelected) {
-                            MaterialTheme.colorScheme.onBackground
-                        } else {
-                            MaterialTheme.colorScheme.outlineVariant
-                        },
-                        shape = CircleShape,
-                    )
-                    .clickable { onColorSelected(option) }
-                    .semantics {
-                        contentDescription = "${option.label} color"
-                        selected = isSelected
-                    },
-                contentAlignment = Alignment.Center,
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Board size",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Black,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .background(Color.White, CircleShape),
+                BoardDimensionStepper(
+                    value = columns,
+                    onValueChange = onColumnsChange,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "X",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
                     )
                 }
+                BoardDimensionStepper(
+                    value = rows,
+                    onValueChange = onRowsChange,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoardDimensionStepper(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = { onValueChange((value - 1).coerceAtLeast(MinBoardBoxes)) },
+                enabled = value > MinBoardBoxes,
+                shape = CircleShape,
+            ) {
+                Text("-", fontSize = 20.sp, fontWeight = FontWeight.Black)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = value.toString(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+            TextButton(
+                onClick = { onValueChange((value + 1).coerceAtMost(MaxBoardBoxes)) },
+                enabled = value < MaxBoardBoxes,
+                shape = CircleShape,
+            ) {
+                Text("+", fontSize = 20.sp, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -409,7 +596,7 @@ private fun GameScreen(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f),
+                .aspectRatio(state.boardSize.columns.toFloat() / state.boardSize.rows.toFloat()),
             color = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(8.dp),
             tonalElevation = 2.dp,
@@ -419,13 +606,12 @@ private fun GameScreen(
                 state = state,
                 onLineSelected = onLineSelected,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp),
+                    .fillMaxSize(),
             )
         }
 
         Text(
-            text = "${state.lines.size}/$TotalLineCount lines  |  ${BoxCount * BoxCount - state.boxes.size} boxes left",
+            text = "${state.lines.size}/${state.boardSize.totalLineCount} lines  |  ${state.boardSize.boxCount - state.boxes.size} boxes left",
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.outline,
             fontSize = 14.sp,
@@ -538,19 +724,20 @@ private fun BoxGameBoard(
     val boardBackground = if (isSystemInDarkTheme()) Color(0xFF121A23) else Color(0xFFFDFEFF)
 
     Canvas(
-        modifier = modifier.pointerInput(state.lines, state.isGameOver) {
+        modifier = modifier.pointerInput(state.lines, state.isGameOver, state.boardSize) {
             detectTapGestures { tap ->
                 if (!state.isGameOver) {
                     nearestOpenEdge(
                         tap = tap,
                         canvasSize = Size(size.width.toFloat(), size.height.toFloat()),
+                        boardSize = state.boardSize,
                         takenLines = state.lines.keys,
                     )?.let(onLineSelected)
                 }
             }
         },
     ) {
-        val metrics = boardMetrics(size) ?: return@Canvas
+        val metrics = boardMetrics(size, state.boardSize) ?: return@Canvas
         drawRoundRect(
             color = boardBackground,
             topLeft = Offset.Zero,
@@ -569,7 +756,7 @@ private fun BoxGameBoard(
             )
         }
 
-        allEdges().forEach { edge ->
+        allEdges(state.boardSize).forEach { edge ->
             val (start, end) = edge.points(metrics)
             val owner = state.lines[edge]
             val ownerColor = owner?.let { state.player(it).color.toComposeColor() }
@@ -582,8 +769,8 @@ private fun BoxGameBoard(
             )
         }
 
-        repeat(DotCount) { row ->
-            repeat(DotCount) { column ->
+        repeat(state.boardSize.dotRows) { row ->
+            repeat(state.boardSize.dotColumns) { column ->
                 drawCircle(
                     color = dotColor,
                     radius = metrics.gap * 0.075f,
@@ -625,26 +812,33 @@ private data class BoardMetrics(
         Offset(left + column * gap, top + row * gap)
 }
 
-private fun boardMetrics(size: Size): BoardMetrics? {
-    val boardSize = min(size.width, size.height)
-    if (boardSize <= 0f) return null
+private fun boardMetrics(size: Size, boardSize: BoardSize): BoardMetrics? {
+    val availableWidth = size.width
+    val availableHeight = size.height
+    if (availableWidth <= 0f || availableHeight <= 0f) return null
 
-    val margin = boardSize * 0.1f
-    val gap = (boardSize - margin * 2f) / (DotCount - 1)
-    val left = (size.width - boardSize) / 2f + margin
-    val top = (size.height - boardSize) / 2f + margin
+    val rawGap = min(availableWidth / boardSize.columns, availableHeight / boardSize.rows)
+    val margin = rawGap * 0.08f
+    val drawableWidth = (availableWidth - margin * 2f).coerceAtLeast(1f)
+    val drawableHeight = (availableHeight - margin * 2f).coerceAtLeast(1f)
+    val gap = min(drawableWidth / boardSize.columns, drawableHeight / boardSize.rows)
+    val boardWidth = gap * boardSize.columns
+    val boardHeight = gap * boardSize.rows
+    val left = (availableWidth - boardWidth) / 2f
+    val top = (availableHeight - boardHeight) / 2f
     return BoardMetrics(left = left, top = top, gap = gap)
 }
 
 private fun nearestOpenEdge(
     tap: Offset,
     canvasSize: Size,
+    boardSize: BoardSize,
     takenLines: Set<Edge>,
 ): Edge? {
-    val metrics = boardMetrics(canvasSize) ?: return null
+    val metrics = boardMetrics(canvasSize, boardSize) ?: return null
     val threshold = max(22f, metrics.gap * 0.22f)
 
-    return allEdges()
+    return allEdges(boardSize)
         .asSequence()
         .filterNot { it in takenLines }
         .map { edge ->
@@ -692,7 +886,7 @@ private fun PlayerId.playerLabel(): String = when (this) {
 private fun BoxGamePreview() {
     BoxGameTheme {
         GameScreen(
-            state = BoxGameState.newGame("R", "B")
+            state = BoxGameState.newGame("A", "B", boardSize = BoardSize(8,15))
                 .placeLine(Edge(EdgeOrientation.Horizontal, 0, 0))
                 .placeLine(Edge(EdgeOrientation.Vertical, 0, 0))
                 .placeLine(Edge(EdgeOrientation.Vertical, 0, 1))
@@ -700,6 +894,29 @@ private fun BoxGamePreview() {
             onLineSelected = {},
             onPlayAgain = {},
             onChangePlayers = {},
+        )
+    }
+}
+
+
+@Preview(showBackground = true)
+@Composable
+private fun SetupScreenPreview() {
+    BoxGameTheme {
+        SetupScreen(
+            player1Initials="A",
+            player2Initials="B",
+            player1Color=PlayerColor.Red,
+            player2Color=PlayerColor.Blue,
+            boardColumns=8,
+            boardRows=10,
+            onPlayer1InitialsChange={ },
+            onPlayer2InitialsChange={ },
+            onPlayer1ColorChange={},
+            onPlayer2ColorChange={},
+            onBoardColumnsChange={},
+            onBoardRowsChange={},
+            onStart={},
         )
     }
 }

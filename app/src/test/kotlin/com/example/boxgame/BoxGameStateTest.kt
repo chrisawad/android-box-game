@@ -27,6 +27,17 @@ class BoxGameStateTest {
     }
 
     @Test
+    fun newGameStoresSelectedBoardSize() {
+        val boardSize = BoardSize(columns = 6, rows = 3)
+
+        val state = BoxGameState.newGame("R", "B", boardSize = boardSize)
+
+        assertEquals(boardSize, state.boardSize)
+        assertEquals(45, state.boardSize.totalLineCount)
+        assertEquals(18, state.boardSize.boxCount)
+    }
+
+    @Test
     fun moveThatDoesNotCompleteBoxSwitchesTurns() {
         val afterMove = BoxGameState.newGame("R", "B")
             .placeLine(h(0, 0))
@@ -85,9 +96,10 @@ class BoxGameStateTest {
 
     @Test
     fun winnerIsPlayerWithMostClaimedBoxesWhenBoardIsFull() {
+        val boardSize = BoardSize(DefaultBoardColumns, DefaultBoardRows)
         val cells = buildList {
-            repeat(BoxCount) { row ->
-                repeat(BoxCount) { column ->
+            repeat(boardSize.rows) { row ->
+                repeat(boardSize.columns) { column ->
                     add(BoxCell(row, column))
                 }
             }
@@ -95,8 +107,8 @@ class BoxGameStateTest {
         val boxes = cells.mapIndexed { index, cell ->
             cell to if (index < 9) PlayerId.Player1 else PlayerId.Player2
         }.toMap()
-        val fullBoard = BoxGameState.newGame("R", "B").copy(
-            lines = allEdges().associateWith { PlayerId.Player1 },
+        val fullBoard = BoxGameState.newGame("R", "B", boardSize = boardSize).copy(
+            lines = allEdges(boardSize).associateWith { PlayerId.Player1 },
             boxes = boxes,
         )
 
@@ -108,9 +120,10 @@ class BoxGameStateTest {
 
     @Test
     fun tieGameHasNoWinner() {
+        val boardSize = BoardSize(DefaultBoardColumns, DefaultBoardRows)
         val cells = buildList {
-            repeat(BoxCount) { row ->
-                repeat(BoxCount) { column ->
+            repeat(boardSize.rows) { row ->
+                repeat(boardSize.columns) { column ->
                     add(BoxCell(row, column))
                 }
             }
@@ -118,8 +131,8 @@ class BoxGameStateTest {
         val boxes = cells.mapIndexed { index, cell ->
             cell to if (index < 8) PlayerId.Player1 else PlayerId.Player2
         }.toMap()
-        val fullBoard = BoxGameState.newGame("R", "B").copy(
-            lines = allEdges().associateWith { PlayerId.Player1 },
+        val fullBoard = BoxGameState.newGame("R", "B", boardSize = boardSize).copy(
+            lines = allEdges(boardSize).associateWith { PlayerId.Player1 },
             boxes = boxes,
         )
 
