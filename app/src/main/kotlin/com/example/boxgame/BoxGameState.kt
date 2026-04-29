@@ -1,24 +1,30 @@
 package com.example.boxgame
 
+import android.os.Parcelable
+import kotlinx.parcelize.Parcelize
+
 const val DefaultBoardColumns = 4
 const val DefaultBoardRows = 4
-const val MinBoardBoxes = 4
+const val MinBoardBoxes = 2
 const val MaxBoardBoxes = 10
 
-enum class EdgeOrientation {
+@Parcelize
+enum class EdgeOrientation : Parcelable {
     Horizontal,
     Vertical,
 }
 
-enum class PlayerId {
+@Parcelize
+enum class PlayerId : Parcelable {
     Player1,
     Player2,
 }
 
+@Parcelize
 enum class PlayerColor(
     val label: String,
     val argb: Long,
-) {
+) : Parcelable {
     Red("Red", 0xFFC62828),
     Blue("Blue", 0xFF1D4ED8),
     Green("Green", 0xFF15803D),
@@ -33,10 +39,11 @@ enum class PlayerColor(
     Slate("Slate", 0xFF475569),
 }
 
+@Parcelize
 data class BoardSize(
     val columns: Int,
     val rows: Int,
-) {
+) : Parcelable {
     init {
         require(columns in MinBoardBoxes..MaxBoardBoxes) {
             "Board columns must be between $MinBoardBoxes and $MaxBoardBoxes"
@@ -59,17 +66,19 @@ data class BoardSize(
         get() = dotRows * columns + rows * dotColumns
 }
 
+@Parcelize
 data class Player(
     val id: PlayerId,
     val initials: String,
     val color: PlayerColor,
-)
+) : Parcelable
 
+@Parcelize
 data class Edge(
     val orientation: EdgeOrientation,
     val row: Int,
     val column: Int,
-) {
+) : Parcelable {
     fun isValidFor(boardSize: BoardSize): Boolean =
         when (orientation) {
             EdgeOrientation.Horizontal -> row in 0 until boardSize.dotRows && column in 0 until boardSize.columns
@@ -77,11 +86,13 @@ data class Edge(
         }
 }
 
+@Parcelize
 data class BoxCell(
     val row: Int,
     val column: Int,
-)
+) : Parcelable
 
+@Parcelize
 data class BoxGameState(
     val player1: Player,
     val player2: Player,
@@ -89,7 +100,7 @@ data class BoxGameState(
     val currentPlayerId: PlayerId = PlayerId.Player1,
     val lines: Map<Edge, PlayerId> = emptyMap(),
     val boxes: Map<BoxCell, PlayerId> = emptyMap(),
-) {
+) : Parcelable {
     val currentPlayer: Player
         get() = player(currentPlayerId)
 

@@ -28,13 +28,13 @@ class BoxGameStateTest {
 
     @Test
     fun newGameStoresSelectedBoardSize() {
-        val boardSize = BoardSize(columns = 6, rows = 3)
+        val boardSize = BoardSize(columns = 6, rows = 4)
 
         val state = BoxGameState.newGame("R", "B", boardSize = boardSize)
 
         assertEquals(boardSize, state.boardSize)
-        assertEquals(45, state.boardSize.totalLineCount)
-        assertEquals(18, state.boardSize.boxCount)
+        assertEquals(58, state.boardSize.totalLineCount)
+        assertEquals(24, state.boardSize.boxCount)
     }
 
     @Test

@@ -3,6 +3,8 @@ package com.example.boxgame
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Bundle
+import android.os.Parcelable
+import kotlinx.parcelize.Parcelize
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +36,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,6 +62,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -71,6 +76,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.firebase.FirebaseApp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -78,6 +84,7 @@ import kotlin.math.sqrt
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FirebaseApp.initializeApp(this)
         enableEdgeToEdge()
         setContent {
             BoxGameTheme {
@@ -128,20 +135,65 @@ private fun BoxGameTheme(content: @Composable () -> Unit) {
 
 @Composable
 private fun BoxGameApp() {
+    var setupMode by rememberSaveable { mutableStateOf(SetupMode.Local) }
     var player1Initials by rememberSaveable { mutableStateOf("") }
     var player2Initials by rememberSaveable { mutableStateOf("") }
     var player1Color by rememberSaveable { mutableStateOf(PlayerColor.Red) }
     var player2Color by rememberSaveable { mutableStateOf(PlayerColor.Blue) }
     var boardColumns by rememberSaveable { mutableIntStateOf(DefaultBoardColumns) }
     var boardRows by rememberSaveable { mutableIntStateOf(DefaultBoardRows) }
+    var joinCode by rememberSaveable { mutableStateOf("") }
     var gameState by remember { mutableStateOf<BoxGameState?>(null) }
+    var multiplayerSession by remember { mutableStateOf<MultiplayerSession?>(null) }
+    var multiplayerRoom by remember { mutableStateOf<MultiplayerRoom?>(null) }
+    var multiplayerMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var multiplayerBusy by rememberSaveable { mutableStateOf(false) }
+    val multiplayerRepository = remember { MultiplayerRepository() }
+
+    DisposableEffect(multiplayerSession) {
+        val session = multiplayerSession
+        if (session == null) {
+            onDispose {}
+        } else {
+            session.listen(
+                onRoomChanged = { room -> multiplayerRoom = room },
+                onError = { message -> multiplayerMessage = message },
+            )
+            onDispose {
+                session.close()
+            }
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
     ) {
+        val session = multiplayerSession
         val state = gameState
-        if (state == null) {
+        if (session != null) {
+            MultiplayerGameScreen(
+                session = session,
+                room = multiplayerRoom,
+                message = multiplayerMessage,
+                onLineSelected = { edge ->
+                    multiplayerMessage = null
+                    session.submitMove(edge) { result ->
+                        result.onFailure {
+                            multiplayerMessage = it.message ?: "Move was rejected."
+                        }
+                    }
+                },
+                onLeave = {
+                    multiplayerBusy = false
+                    multiplayerMessage = null
+                    session.leave {
+                        multiplayerRoom = null
+                        multiplayerSession = null
+                    }
+                },
+            )
+        } else if (state == null) {
             SetupScreen(
                 player1Initials = player1Initials,
                 player2Initials = player2Initials,
@@ -149,6 +201,14 @@ private fun BoxGameApp() {
                 player2Color = player2Color,
                 boardColumns = boardColumns,
                 boardRows = boardRows,
+                joinCode = joinCode,
+                multiplayerMessage = multiplayerMessage,
+                multiplayerBusy = multiplayerBusy,
+                setupMode = setupMode,
+                onSetupModeChange = { mode ->
+                    setupMode = mode
+                    multiplayerMessage = null
+                },
                 onPlayer1InitialsChange = { player1Initials = normalizeInitials(it) },
                 onPlayer2InitialsChange = { player2Initials = normalizeInitials(it) },
                 onPlayer1ColorChange = { color ->
@@ -167,7 +227,9 @@ private fun BoxGameApp() {
                 },
                 onBoardColumnsChange = { boardColumns = it },
                 onBoardRowsChange = { boardRows = it },
+                onJoinCodeChange = { joinCode = normalizeJoinCode(it) },
                 onStart = {
+                    multiplayerMessage = null
                     gameState = BoxGameState.newGame(
                         player1Initials,
                         player2Initials,
@@ -175,6 +237,48 @@ private fun BoxGameApp() {
                         player2Color,
                         BoardSize(boardColumns, boardRows),
                     )
+                },
+                onCreateGame = {
+                    multiplayerBusy = true
+                    multiplayerMessage = null
+                    multiplayerRepository.createGame(
+                        playerInitials = player1Initials,
+                        playerColor = player1Color,
+                        boardSize = BoardSize(boardColumns, boardRows),
+                    ) { result ->
+                        multiplayerBusy = false
+                        result
+                            .onSuccess { createdSession ->
+                                gameState = null
+                                multiplayerRoom = null
+                                multiplayerMessage = "Share code ${createdSession.roomCode}"
+                                multiplayerSession = createdSession
+                            }
+                            .onFailure {
+                                multiplayerMessage = it.message ?: "Could not create a game."
+                            }
+                    }
+                },
+                onJoinGame = {
+                    multiplayerBusy = true
+                    multiplayerMessage = null
+                    multiplayerRepository.joinGame(
+                        joinCode = joinCode,
+                        playerInitials = player1Initials,
+                        playerColor = player1Color,
+                    ) { result ->
+                        multiplayerBusy = false
+                        result
+                            .onSuccess { joinedSession ->
+                                gameState = null
+                                multiplayerRoom = null
+                                multiplayerMessage = null
+                                multiplayerSession = joinedSession
+                            }
+                            .onFailure {
+                                multiplayerMessage = it.message ?: "Could not join that game."
+                            }
+                    }
                 },
             )
         } else {
@@ -206,6 +310,12 @@ private fun BoxGameApp() {
     }
 }
 
+@Parcelize
+private enum class SetupMode : Parcelable {
+    Local,
+    Multiplayer,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SetupScreen(
@@ -215,17 +325,25 @@ private fun SetupScreen(
     player2Color: PlayerColor,
     boardColumns: Int,
     boardRows: Int,
+    joinCode: String,
+    multiplayerMessage: String?,
+    multiplayerBusy: Boolean,
+    setupMode: SetupMode,
+    onSetupModeChange: (SetupMode) -> Unit,
     onPlayer1InitialsChange: (String) -> Unit,
     onPlayer2InitialsChange: (String) -> Unit,
     onPlayer1ColorChange: (PlayerColor) -> Unit,
     onPlayer2ColorChange: (PlayerColor) -> Unit,
     onBoardColumnsChange: (Int) -> Unit,
     onBoardRowsChange: (Int) -> Unit,
+    onJoinCodeChange: (String) -> Unit,
     onStart: () -> Unit,
+    onCreateGame: () -> Unit,
+    onJoinGame: () -> Unit,
 ) {
     val player1ComposeColor = player1Color.toComposeColor()
     val player2ComposeColor = player2Color.toComposeColor()
-    var colorPickerTarget by remember { mutableStateOf<PlayerId?>(null) }
+    var colorPickerTarget: PlayerId? by remember { mutableStateOf<PlayerId?>(null) }
 
     Column(
         modifier = Modifier
@@ -245,27 +363,34 @@ private fun SetupScreen(
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "Set up players",
+            text = if (setupMode == SetupMode.Local) "Local game" else "Multiplayer",
             modifier = Modifier.padding(top = 8.dp, bottom = 28.dp),
             color = MaterialTheme.colorScheme.outline,
             fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold,
         )
+        SetupModePicker(
+            selectedMode = setupMode,
+            onModeSelected = onSetupModeChange,
+        )
+        Spacer(modifier = Modifier.height(22.dp))
         InitialsField(
             value = player1Initials,
             onValueChange = onPlayer1InitialsChange,
-            label = "Player 1",
+            label = if (setupMode == SetupMode.Local) "Player 1" else "Your initials",
             color = player1ComposeColor,
             onColorClick = { colorPickerTarget = PlayerId.Player1 },
         )
-        Spacer(modifier = Modifier.height(18.dp))
-        InitialsField(
-            value = player2Initials,
-            onValueChange = onPlayer2InitialsChange,
-            label = "Player 2",
-            color = player2ComposeColor,
-            onColorClick = { colorPickerTarget = PlayerId.Player2 },
-        )
+        if (setupMode == SetupMode.Local) {
+            Spacer(modifier = Modifier.height(18.dp))
+            InitialsField(
+                value = player2Initials,
+                onValueChange = onPlayer2InitialsChange,
+                label = "Player 2",
+                color = player2ComposeColor,
+                onColorClick = { colorPickerTarget = PlayerId.Player2 },
+            )
+        }
         Spacer(modifier = Modifier.height(22.dp))
         BoardSizePicker(
             columns = boardColumns,
@@ -274,28 +399,104 @@ private fun SetupScreen(
             onRowsChange = onBoardRowsChange,
         )
         Spacer(modifier = Modifier.height(28.dp))
-        Button(
-            onClick = onStart,
-            enabled = player1Initials.isNotBlank() && player2Initials.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = player1ComposeColor,
-                contentColor = Color.White,
-            ),
-            shape = RoundedCornerShape(8.dp),
-        ) {
+        if (setupMode == SetupMode.Local) {
+            Button(
+                onClick = onStart,
+                enabled = player1Initials.isNotBlank() && player2Initials.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = player1ComposeColor,
+                    contentColor = Color.White,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = "Start game",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+        } else {
+            Button(
+                onClick = onCreateGame,
+                enabled = player1Initials.isNotBlank() && !multiplayerBusy,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = player1ComposeColor,
+                    contentColor = Color.White,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = "Create Game",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = joinCode,
+                onValueChange = onJoinCodeChange,
+                label = { Text("Join code") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                textStyle = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.sp,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = onJoinGame,
+                enabled = player1Initials.isNotBlank() && joinCode.length == MultiplayerJoinCodeLength && !multiplayerBusy,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = player1ComposeColor,
+                    contentColor = Color.White,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = "Join Game",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+            if (multiplayerBusy) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                    )
+                }
+            }
+        }
+        multiplayerMessage?.let { message ->
+            Spacer(modifier = Modifier.height(14.dp))
             Text(
-                text = "Start game",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(vertical = 6.dp),
+                text = message,
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.outline,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
             )
         }
     }
 
     when (colorPickerTarget) {
         PlayerId.Player1 -> PlayerColorDialog(
-            title = "Player 1 color",
+            title = if (setupMode == SetupMode.Local) "Player 1 color" else "Your player color",
             selectedColor = player1Color,
             onColorSelected = {
                 onPlayer1ColorChange(it)
@@ -317,7 +518,46 @@ private fun SetupScreen(
         null -> Unit
     }
 
-    print(colorPickerTarget)
+}
+
+@Composable
+private fun SetupModePicker(
+    selectedMode: SetupMode,
+    onModeSelected: (SetupMode) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier.padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            SetupMode.entries.forEach { mode ->
+                val selected = mode == selectedMode
+                Button(
+                    onClick = { onModeSelected(mode) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        text = when (mode) {
+                            SetupMode.Local -> "Local Game"
+                            SetupMode.Multiplayer -> "Multiplayer"
+                        },
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -537,11 +777,161 @@ private fun BoardDimensionStepper(
 }
 
 @Composable
+private fun MultiplayerGameScreen(
+    session: MultiplayerSession,
+    room: MultiplayerRoom?,
+    message: String?,
+    onLineSelected: (Edge) -> Unit,
+    onLeave: () -> Unit,
+) {
+    val state = room?.gameState
+    val opponent = room?.opponentFor(session.localPlayerId)
+
+    if (room == null || state == null || room.status == MultiplayerStatus.Waiting) {
+        WaitingRoomScreen(
+            roomCode = session.roomCode,
+            statusText = when {
+                room?.status == MultiplayerStatus.Abandoned -> "Game closed"
+                room == null -> "Connecting"
+                else -> "Waiting for opponent"
+            },
+            message = message,
+            onLeave = onLeave,
+        )
+        return
+    }
+
+    val opponentConnected = opponent?.connected == true
+    val canMove = room.status == MultiplayerStatus.Active &&
+        opponentConnected &&
+        state.currentPlayerId == session.localPlayerId &&
+        !state.isGameOver
+
+    GameScreen(
+        state = state,
+        onLineSelected = onLineSelected,
+        onPlayAgain = {},
+        onChangePlayers = onLeave,
+        title = "Room ${room.code}",
+        changePlayersLabel = "Leave",
+        statusOverride = multiplayerStatusText(room, session.localPlayerId, state),
+        supportingStatus = multiplayerSupportingStatus(room, session.localPlayerId, message),
+        canSelectLines = canMove,
+        showPlayAgain = false,
+    )
+}
+
+@Composable
+private fun WaitingRoomScreen(
+    roomCode: String,
+    statusText: String,
+    message: String?,
+    onLeave: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = "Box Game",
+            color = MaterialTheme.colorScheme.onBackground,
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center,
+        )
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(8.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = roomCode,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.sp,
+                )
+                Text(
+                    text = statusText,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center,
+                )
+                message?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.outline,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                TextButton(
+                    onClick = onLeave,
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text("Leave")
+                }
+            }
+        }
+    }
+}
+
+private fun multiplayerStatusText(
+    room: MultiplayerRoom,
+    localPlayerId: PlayerId,
+    state: BoxGameState,
+): String {
+    val opponent = room.opponentFor(localPlayerId)
+    return when {
+        room.status == MultiplayerStatus.Abandoned -> "Opponent left the game"
+        opponent == null -> "Waiting for opponent"
+        !opponent.connected && room.status == MultiplayerStatus.Active -> "Opponent disconnected"
+        state.isTie -> "Tie game"
+        state.isGameOver && state.winner == localPlayerId -> "You win"
+        state.isGameOver -> "${state.player(state.winner ?: localPlayerId.next()).initials} wins"
+        state.currentPlayerId == localPlayerId -> "Your turn"
+        else -> "Opponent's turn"
+    }
+}
+
+private fun multiplayerSupportingStatus(
+    room: MultiplayerRoom,
+    localPlayerId: PlayerId,
+    message: String?,
+): String =
+    listOfNotNull(
+        "Code ${room.code}",
+        localPlayerId.playerLabel(),
+        message,
+    ).joinToString("  |  ")
+
+@Composable
 private fun GameScreen(
     state: BoxGameState,
     onLineSelected: (Edge) -> Unit,
     onPlayAgain: () -> Unit,
     onChangePlayers: () -> Unit,
+    title: String = "Box Game",
+    changePlayersLabel: String = "Players",
+    statusOverride: String? = null,
+    supportingStatus: String? = null,
+    canSelectLines: Boolean = true,
+    showPlayAgain: Boolean = true,
 ) {
     Column(
         modifier = Modifier
@@ -557,7 +947,7 @@ private fun GameScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Box Game",
+                text = title,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Black,
@@ -566,7 +956,7 @@ private fun GameScreen(
                 onClick = onChangePlayers,
                 shape = RoundedCornerShape(8.dp),
             ) {
-                Text("Players")
+                Text(changePlayersLabel)
             }
         }
 
@@ -591,6 +981,9 @@ private fun GameScreen(
         StatusPanel(
             state = state,
             onPlayAgain = onPlayAgain,
+            statusOverride = statusOverride,
+            supportingStatus = supportingStatus,
+            showPlayAgain = showPlayAgain,
         )
 
         Surface(
@@ -605,6 +998,7 @@ private fun GameScreen(
             BoxGameBoard(
                 state = state,
                 onLineSelected = onLineSelected,
+                enabled = canSelectLines,
                 modifier = Modifier
                     .fillMaxSize(),
             )
@@ -667,6 +1061,9 @@ private fun PlayerScorePanel(
 private fun StatusPanel(
     state: BoxGameState,
     onPlayAgain: () -> Unit,
+    statusOverride: String? = null,
+    supportingStatus: String? = null,
+    showPlayAgain: Boolean = true,
 ) {
     val statusColor = when {
         state.isTie -> MaterialTheme.colorScheme.onSurface
@@ -675,7 +1072,7 @@ private fun StatusPanel(
         else -> state.currentPlayer.color.toComposeColor()
     }
 
-    val statusText = when {
+    val statusText = statusOverride ?: when {
         state.isTie -> "Tie game"
         state.isGameOver -> "${state.player(state.winner ?: PlayerId.Player1).initials} wins"
         else -> "${state.currentPlayer.initials}'s turn"
@@ -691,13 +1088,26 @@ private fun StatusPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = statusText,
-                color = statusColor,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-            )
-            if (state.isGameOver) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = statusText,
+                    color = statusColor,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                )
+                supportingStatus?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.outline,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            if (state.isGameOver && showPlayAgain) {
                 Button(
                     onClick = onPlayAgain,
                     colors = ButtonDefaults.buttonColors(
@@ -717,6 +1127,7 @@ private fun StatusPanel(
 private fun BoxGameBoard(
     state: BoxGameState,
     onLineSelected: (Edge) -> Unit,
+    enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val openLineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.76f)
@@ -724,9 +1135,9 @@ private fun BoxGameBoard(
     val boardBackground = if (isSystemInDarkTheme()) Color(0xFF121A23) else Color(0xFFFDFEFF)
 
     Canvas(
-        modifier = modifier.pointerInput(state.lines, state.isGameOver, state.boardSize) {
+        modifier = modifier.pointerInput(enabled, state.lines, state.isGameOver, state.boardSize) {
             detectTapGestures { tap ->
-                if (!state.isGameOver) {
+                if (enabled && !state.isGameOver) {
                     nearestOpenEdge(
                         tap = tap,
                         canvasSize = Size(size.width.toFloat(), size.height.toFloat()),
@@ -783,7 +1194,7 @@ private fun BoxGameBoard(
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawClaimedInitials(
+private fun DrawScope.drawClaimedInitials(
     state: BoxGameState,
     metrics: BoardMetrics,
 ) {
@@ -886,7 +1297,7 @@ private fun PlayerId.playerLabel(): String = when (this) {
 private fun BoxGamePreview() {
     BoxGameTheme {
         GameScreen(
-            state = BoxGameState.newGame("A", "B", boardSize = BoardSize(8,15))
+            state = BoxGameState.newGame("A", "B", boardSize = BoardSize(6,8))
                 .placeLine(Edge(EdgeOrientation.Horizontal, 0, 0))
                 .placeLine(Edge(EdgeOrientation.Vertical, 0, 0))
                 .placeLine(Edge(EdgeOrientation.Vertical, 0, 1))
@@ -910,13 +1321,21 @@ private fun SetupScreenPreview() {
             player2Color=PlayerColor.Blue,
             boardColumns=8,
             boardRows=10,
+            joinCode="ABC123",
+            multiplayerMessage=null,
+            multiplayerBusy=false,
+            setupMode=SetupMode.Local,
+            onSetupModeChange={},
             onPlayer1InitialsChange={ },
             onPlayer2InitialsChange={ },
             onPlayer1ColorChange={},
             onPlayer2ColorChange={},
             onBoardColumnsChange={},
             onBoardRowsChange={},
+            onJoinCodeChange={},
             onStart={},
+            onCreateGame={},
+            onJoinGame={},
         )
     }
 }

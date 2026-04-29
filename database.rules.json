@@ -1,0 +1,13 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "gameRooms": {
+      "$code": {
+        ".read": "auth != null && (!data.exists() || data.child('status').val() == 'waiting' || data.child('hostUid').val() == auth.uid || data.child('guestUid').val() == auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('code').val() == $code && newData.child('hostUid').val() == auth.uid && newData.child('status').val() == 'waiting') || (data.exists() && data.child('status').val() == 'waiting' && !data.child('guestUid').exists() && data.child('hostUid').val() != auth.uid && newData.child('hostUid').val() == data.child('hostUid').val() && newData.child('guestUid').val() == auth.uid && newData.child('status').val() == 'active') || (data.exists() && (data.child('hostUid').val() == auth.uid || data.child('guestUid').val() == auth.uid)))",
+        ".validate": "newData.hasChildren(['code', 'status', 'hostUid', 'players', 'state']) && newData.child('code').val() == $code && (newData.child('status').val() == 'waiting' || newData.child('status').val() == 'active' || newData.child('status').val() == 'finished' || newData.child('status').val() == 'abandoned')"
+      }
+    }
+  }
+}
