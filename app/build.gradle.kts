@@ -9,11 +9,11 @@ plugins {
 }
 
 extensions.configure<ApplicationExtension> {
-    namespace = "com.example.boxgame"
+    namespace = "com.chrisawad.boxgame"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.boxgame"
+        applicationId = "com.chrisawad.boxgame"
         minSdk = 24
         targetSdk = 37
         versionCode = 1

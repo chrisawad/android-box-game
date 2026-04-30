@@ -7,7 +7,7 @@ Make more squares than your opponent to win.
 This app supports local play and simple 2-player online rooms using Firebase Anonymous Auth plus Realtime Database.
 
 1. Create or open a Firebase project.
-2. Add an Android app with package name `com.example.boxgame`.
+2. Add an Android app with package name `com.chrisawad.boxgame`.
 3. Download `google-services.json` from Firebase and place it at:
 
    ```text

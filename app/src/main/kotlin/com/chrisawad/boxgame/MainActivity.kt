@@ -1,4 +1,4 @@
-package com.example.boxgame
+package com.chrisawad.boxgame
 
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -19,10 +19,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -144,11 +146,20 @@ private fun BoxGameApp() {
     var boardRows by rememberSaveable { mutableIntStateOf(DefaultBoardRows) }
     var joinCode by rememberSaveable { mutableStateOf("") }
     var gameState by remember { mutableStateOf<BoxGameState?>(null) }
-    var multiplayerSession by remember { mutableStateOf<MultiplayerSession?>(null) }
+    var savedMultiplayerSession by rememberSaveable { mutableStateOf<SavedMultiplayerSession?>(null) }
     var multiplayerRoom by remember { mutableStateOf<MultiplayerRoom?>(null) }
     var multiplayerMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var multiplayerBusy by rememberSaveable { mutableStateOf(false) }
     val multiplayerRepository = remember { MultiplayerRepository() }
+    val multiplayerSession = remember(savedMultiplayerSession, multiplayerRepository) {
+        savedMultiplayerSession?.let { savedSession ->
+            multiplayerRepository.restoreSession(
+                roomCode = savedSession.roomCode,
+                uid = savedSession.uid,
+                localPlayerId = savedSession.localPlayerId,
+            )
+        }
+    }
 
     DisposableEffect(multiplayerSession) {
         val session = multiplayerSession
@@ -160,7 +171,7 @@ private fun BoxGameApp() {
                 onError = { message -> multiplayerMessage = message },
             )
             onDispose {
-                session.close()
+                session.detach()
             }
         }
     }
@@ -189,7 +200,7 @@ private fun BoxGameApp() {
                     multiplayerMessage = null
                     session.leave {
                         multiplayerRoom = null
-                        multiplayerSession = null
+                        savedMultiplayerSession = null
                     }
                 },
             )
@@ -252,7 +263,7 @@ private fun BoxGameApp() {
                                 gameState = null
                                 multiplayerRoom = null
                                 multiplayerMessage = "Share code ${createdSession.roomCode}"
-                                multiplayerSession = createdSession
+                                savedMultiplayerSession = createdSession.toSavedMultiplayerSession()
                             }
                             .onFailure {
                                 multiplayerMessage = it.message ?: "Could not create a game."
@@ -273,7 +284,7 @@ private fun BoxGameApp() {
                                 gameState = null
                                 multiplayerRoom = null
                                 multiplayerMessage = null
-                                multiplayerSession = joinedSession
+                                savedMultiplayerSession = joinedSession.toSavedMultiplayerSession()
                             }
                             .onFailure {
                                 multiplayerMessage = it.message ?: "Could not join that game."
@@ -315,6 +326,20 @@ private enum class SetupMode : Parcelable {
     Local,
     Multiplayer,
 }
+
+@Parcelize
+private data class SavedMultiplayerSession(
+    val roomCode: String,
+    val uid: String,
+    val localPlayerId: PlayerId,
+) : Parcelable
+
+private fun MultiplayerSession.toSavedMultiplayerSession(): SavedMultiplayerSession =
+    SavedMultiplayerSession(
+        roomCode = roomCode,
+        uid = uid,
+        localPlayerId = localPlayerId,
+    )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -986,22 +1011,39 @@ private fun GameScreen(
             showPlayAgain = showPlayAgain,
         )
 
-        Surface(
+        val boardAspectRatio = state.boardSize.columns.toFloat() / state.boardSize.rows.toFloat()
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(state.boardSize.columns.toFloat() / state.boardSize.rows.toFloat()),
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(8.dp),
-            tonalElevation = 2.dp,
-            shadowElevation = 2.dp,
+                .weight(1f),
+            contentAlignment = Alignment.Center,
         ) {
-            BoxGameBoard(
-                state = state,
-                onLineSelected = onLineSelected,
-                enabled = canSelectLines,
-                modifier = Modifier
-                    .fillMaxSize(),
-            )
+            val availableAspectRatio = maxWidth.value / maxHeight.value.coerceAtLeast(1f)
+            val boardModifier = if (availableAspectRatio > boardAspectRatio) {
+                Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(boardAspectRatio)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(boardAspectRatio)
+            }
+
+            Surface(
+                modifier = boardModifier,
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(8.dp),
+                tonalElevation = 2.dp,
+                shadowElevation = 2.dp,
+            ) {
+                BoxGameBoard(
+                    state = state,
+                    onLineSelected = onLineSelected,
+                    enabled = canSelectLines,
+                    modifier = Modifier
+                        .fillMaxSize(),
+                )
+            }
         }
 
         Text(

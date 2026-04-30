@@ -1,4 +1,4 @@
-package com.example.boxgame
+package com.chrisawad.boxgame
 
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize

@@ -1,4 +1,4 @@
-package com.example.boxgame
+package com.chrisawad.boxgame
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
