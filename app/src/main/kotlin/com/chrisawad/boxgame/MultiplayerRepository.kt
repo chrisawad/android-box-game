@@ -582,6 +582,82 @@ class MultiplayerSession internal constructor(
         )
     }
 
+    fun requestRematch(onResult: (Result<Unit>) -> Unit) {
+        if (closed) {
+            onResult(Result.failure(MultiplayerException("You already left this game.")))
+            return
+        }
+
+        val rejectionReason = AtomicReference<String?>()
+
+        roomRef.runTransaction(
+            object : Transaction.Handler {
+                override fun doTransaction(currentData: MutableData): Transaction.Result {
+                    val room = currentData.toMultiplayerRoomOrNull(roomCode)
+                    val state = room?.gameState
+                    val player2 = room?.player2
+                    val localPlayer = room?.playerForUid(uid)
+                    if (room == null || state == null || player2 == null) {
+                        rejectionReason.set("Game state is not ready yet.")
+                        return Transaction.abort()
+                    }
+                    if (room.status != MultiplayerStatus.Finished || !state.isGameOver) {
+                        rejectionReason.set("This game is not finished yet.")
+                        return Transaction.abort()
+                    }
+                    if (localPlayer == null) {
+                        rejectionReason.set("You are not part of this game.")
+                        return Transaction.abort()
+                    }
+                    if (state.winner == null) {
+                        rejectionReason.set("A tied game does not have a losing player to start a rematch.")
+                        return Transaction.abort()
+                    }
+                    if (state.winner == localPlayer.playerId) {
+                        rejectionReason.set("Only the losing player can start a rematch.")
+                        return Transaction.abort()
+                    }
+                    if (!room.player1.connected || !player2.connected) {
+                        rejectionReason.set("Both players must be connected before starting a rematch.")
+                        return Transaction.abort()
+                    }
+
+                    val rematchState = BoxGameState.newGame(
+                        player1Initials = room.player1.initials,
+                        player2Initials = player2.initials,
+                        player1Color = room.player1.color,
+                        player2Color = player2.color,
+                        boardSize = state.boardSize,
+                    )
+                    currentData.child("state").value = rematchState.toFirebaseStateMap()
+                    currentData.child("status").value = MultiplayerStatus.Active.wireName
+                    currentData.child("updatedAt").value = ServerValue.TIMESTAMP
+                    currentData.extendExpiration()
+                    return Transaction.success(currentData)
+                }
+
+                override fun onComplete(
+                    error: DatabaseError?,
+                    committed: Boolean,
+                    currentData: DataSnapshot?,
+                ) {
+                    when {
+                        error != null -> {
+                            Log.w(MultiplayerLogTag, "Rematch transaction failed for $roomCode", error.toException())
+                            onResult(Result.failure(error.toException()))
+                        }
+                        committed -> onResult(Result.success(Unit))
+                        else -> onResult(
+                            Result.failure(
+                                MultiplayerException(rejectionReason.get() ?: "Rematch was rejected."),
+                            ),
+                        )
+                    }
+                }
+            },
+        )
+    }
+
     fun leave(onComplete: () -> Unit = {}) {
         closed = true
         stopListening()
