@@ -187,6 +187,7 @@ private fun BoxGameApp() {
                 session = session,
                 room = multiplayerRoom,
                 message = multiplayerMessage,
+                rematchBusy = multiplayerBusy,
                 onLineSelected = { edge ->
                     multiplayerMessage = null
                     session.submitMove(edge) { result ->
@@ -201,6 +202,20 @@ private fun BoxGameApp() {
                     session.leave {
                         multiplayerRoom = null
                         savedMultiplayerSession = null
+                    }
+                },
+                onRequestRematch = {
+                    multiplayerBusy = true
+                    multiplayerMessage = null
+                    session.requestRematch { result ->
+                        multiplayerBusy = false
+                        result
+                            .onSuccess {
+                                multiplayerMessage = null
+                            }
+                            .onFailure {
+                                multiplayerMessage = it.message ?: "Could not start a rematch."
+                            }
                     }
                 },
             )
@@ -846,8 +861,10 @@ private fun MultiplayerGameScreen(
     session: MultiplayerSession,
     room: MultiplayerRoom?,
     message: String?,
+    rematchBusy: Boolean,
     onLineSelected: (Edge) -> Unit,
     onLeave: () -> Unit,
+    onRequestRematch: () -> Unit,
 ) {
     val state = room?.gameState
     val opponent = room?.opponentFor(session.localPlayerId)
@@ -872,18 +889,89 @@ private fun MultiplayerGameScreen(
         opponentConnected &&
         state.currentPlayerId == session.localPlayerId &&
         !state.isGameOver
+    val canRequestRematch = room.status == MultiplayerStatus.Finished &&
+        opponentConnected &&
+        state.winner != null &&
+        state.winner != session.localPlayerId
+    val rematchPromptKey = if (canRequestRematch) {
+        finishedGameKey(room, state)
+    } else {
+        null
+    }
+    var dismissedRematchPromptKey by remember(rematchPromptKey) { mutableStateOf<String?>(null) }
+    var showingRematchPromptFromButton by remember(rematchPromptKey) { mutableStateOf(false) }
+    val showRematchPrompt = canRequestRematch &&
+        rematchPromptKey != null &&
+        (showingRematchPromptFromButton || dismissedRematchPromptKey != rematchPromptKey)
+
+    if (showRematchPrompt) {
+        RematchPromptDialog(
+            roomCode = room.code,
+            rematchBusy = rematchBusy,
+            onConfirm = {
+                dismissedRematchPromptKey = rematchPromptKey
+                showingRematchPromptFromButton = false
+                onRequestRematch()
+            },
+            onDismiss = {
+                dismissedRematchPromptKey = rematchPromptKey
+                showingRematchPromptFromButton = false
+            },
+        )
+    }
 
     GameScreen(
         state = state,
         onLineSelected = onLineSelected,
-        onPlayAgain = {},
+        onPlayAgain = { showingRematchPromptFromButton = true },
         onChangePlayers = onLeave,
         title = "Room ${room.code}",
         changePlayersLabel = "Leave",
         statusOverride = multiplayerStatusText(room, session.localPlayerId, state),
         supportingStatus = multiplayerSupportingStatus(room, session.localPlayerId, message),
         canSelectLines = canMove,
-        showPlayAgain = false,
+        showPlayAgain = canRequestRematch,
+        playAgainLabel = "Rematch",
+        playAgainEnabled = !rematchBusy,
+    )
+}
+
+@Composable
+private fun RematchPromptDialog(
+    roomCode: String,
+    rematchBusy: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Rematch?",
+                fontWeight = FontWeight.Black,
+            )
+        },
+        text = {
+            Text("Start a new game in room $roomCode with the same players and board size?")
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !rematchBusy,
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text("Start rematch")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !rematchBusy,
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text("Not now")
+            }
+        },
     )
 }
 
@@ -986,6 +1074,18 @@ private fun multiplayerSupportingStatus(
         message,
     ).joinToString("  |  ")
 
+private fun finishedGameKey(
+    room: MultiplayerRoom,
+    state: BoxGameState,
+): String = listOf(
+    room.code,
+    state.winner?.name.orEmpty(),
+    state.player1Score.toString(),
+    state.player2Score.toString(),
+    state.lines.hashCode().toString(),
+    state.boxes.hashCode().toString(),
+).joinToString(":")
+
 @Composable
 private fun GameScreen(
     state: BoxGameState,
@@ -998,6 +1098,8 @@ private fun GameScreen(
     supportingStatus: String? = null,
     canSelectLines: Boolean = true,
     showPlayAgain: Boolean = true,
+    playAgainLabel: String = "Play again",
+    playAgainEnabled: Boolean = true,
 ) {
     Column(
         modifier = Modifier
@@ -1050,6 +1152,8 @@ private fun GameScreen(
             statusOverride = statusOverride,
             supportingStatus = supportingStatus,
             showPlayAgain = showPlayAgain,
+            playAgainLabel = playAgainLabel,
+            playAgainEnabled = playAgainEnabled,
         )
 
         val boardAspectRatio = state.boardSize.columns.toFloat() / state.boardSize.rows.toFloat()
@@ -1147,6 +1251,8 @@ private fun StatusPanel(
     statusOverride: String? = null,
     supportingStatus: String? = null,
     showPlayAgain: Boolean = true,
+    playAgainLabel: String = "Play again",
+    playAgainEnabled: Boolean = true,
 ) {
     val statusColor = when {
         state.isTie -> MaterialTheme.colorScheme.onSurface
@@ -1193,13 +1299,14 @@ private fun StatusPanel(
             if (state.isGameOver && showPlayAgain) {
                 Button(
                     onClick = onPlayAgain,
+                    enabled = playAgainEnabled,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = statusColor,
                         contentColor = Color.White,
                     ),
                     shape = RoundedCornerShape(8.dp),
                 ) {
-                    Text("Play again")
+                    Text(playAgainLabel)
                 }
             }
         }
