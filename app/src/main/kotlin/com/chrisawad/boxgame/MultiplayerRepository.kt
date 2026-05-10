@@ -19,6 +19,7 @@ import kotlin.random.Random
 const val MultiplayerJoinCodeLength = 6
 private const val MaxCreateAttempts = 8
 private const val MaxJoinLookupAttempts = 3
+private const val PublicGameLookupLimit = 10
 private const val JoinLookupRetryDelayMillis = 300L
 private const val NoRoomRejectionReason = "no_room"
 private const val RoomRetentionMillis = 24 * 60 * 60 * 1000L
@@ -57,6 +58,7 @@ data class MultiplayerRoom(
     val player1: MultiplayerPlayer,
     val player2: MultiplayerPlayer?,
     val gameState: BoxGameState?,
+    val isPublic: Boolean,
 ) {
     fun playerForUid(uid: String): MultiplayerPlayer? =
         when (uid) {
@@ -94,6 +96,7 @@ class MultiplayerRepository(
     private val database: FirebaseDatabase = FirebaseDatabase.getInstance(),
 ) {
     private val roomsRef: DatabaseReference = database.getReference("gameRooms")
+    private val publicGamesRef: DatabaseReference = database.getReference("publicGames")
 
     fun createGame(
         playerInitials: String,
@@ -109,6 +112,7 @@ class MultiplayerRepository(
                         playerInitials = normalizeInitials(playerInitials),
                         playerColor = playerColor,
                         boardSize = boardSize,
+                        isPublic = false,
                         attemptsLeft = MaxCreateAttempts,
                         onResult = onResult,
                     )
@@ -144,19 +148,34 @@ class MultiplayerRepository(
         }
     }
 
+    fun joinPublicGame(
+        playerInitials: String,
+        playerColor: PlayerColor,
+        boardSize: BoardSize,
+        onResult: (Result<MultiplayerSession>) -> Unit,
+    ) {
+        ensureSignedIn { authResult ->
+            authResult
+                .onSuccess { uid ->
+                    joinPublicGameOrCreate(
+                        uid = uid,
+                        playerInitials = normalizeInitials(playerInitials),
+                        playerColor = playerColor,
+                        boardSize = boardSize,
+                        onResult = onResult,
+                    )
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
     fun restoreSession(
         roomCode: String,
         uid: String,
         localPlayerId: PlayerId,
     ): MultiplayerSession {
         val code = normalizeJoinCode(roomCode)
-        return MultiplayerSession(
-            roomCode = code,
-            uid = uid,
-            localPlayerId = localPlayerId,
-            roomRef = roomsRef.child(code),
-            connectionInfoRef = database.getReference(".info/connected"),
-        )
+        return sessionFor(code, uid, localPlayerId)
     }
 
     private fun ensureSignedIn(onResult: (Result<String>) -> Unit) {
@@ -186,6 +205,7 @@ class MultiplayerRepository(
         playerInitials: String,
         playerColor: PlayerColor,
         boardSize: BoardSize,
+        isPublic: Boolean,
         attemptsLeft: Int,
         onResult: (Result<MultiplayerSession>) -> Unit,
     ) {
@@ -214,6 +234,7 @@ class MultiplayerRepository(
                         playerInitials = playerInitials,
                         playerColor = playerColor,
                         boardSize = boardSize,
+                        isPublic = isPublic,
                     )
                     return Transaction.success(currentData)
                 }
@@ -228,22 +249,20 @@ class MultiplayerRepository(
                             Log.w(MultiplayerLogTag, "Create room transaction failed for $code", error.toException())
                             onResult(Result.failure(error.toException()))
                         }
-                        committed -> onResult(
-                            Result.success(
-                                MultiplayerSession(
-                                    roomCode = code,
-                                    uid = uid,
-                                    localPlayerId = PlayerId.Player1,
-                                    roomRef = roomRef,
-                                    connectionInfoRef = database.getReference(".info/connected"),
-                                ),
-                            ),
-                        )
+                        committed -> {
+                            val session = sessionFor(code, uid, PlayerId.Player1, roomRef)
+                            if (isPublic) {
+                                publishPublicGame(code, uid, session, onResult)
+                            } else {
+                                onResult(Result.success(session))
+                            }
+                        }
                         currentData?.exists() == true -> tryCreateGame(
                             uid = uid,
                             playerInitials = playerInitials,
                             playerColor = playerColor,
                             boardSize = boardSize,
+                            isPublic = isPublic,
                             attemptsLeft = attemptsLeft - 1,
                             onResult = onResult,
                         )
@@ -272,8 +291,109 @@ class MultiplayerRepository(
             playerColor = playerColor,
             rejectionReason = rejectionReason,
             joinedPlayerId = joinedPlayerId,
+            joinOptions = JoinOptions(),
             attemptsLeft = MaxJoinLookupAttempts,
             onResult = onResult,
+        )
+    }
+
+    private fun joinPublicGameOrCreate(
+        uid: String,
+        playerInitials: String,
+        playerColor: PlayerColor,
+        boardSize: BoardSize,
+        onResult: (Result<MultiplayerSession>) -> Unit,
+    ) {
+        val now = System.currentTimeMillis()
+        publicGamesRef
+            .orderByChild("expiresAt")
+            .startAt(now.toDouble())
+            .limitToFirst(PublicGameLookupLimit)
+            .get()
+            .addOnCompleteListener { task ->
+                when {
+                    task.isSuccessful -> {
+                        val candidateCodes = task.result?.children
+                            ?.mapNotNull { it.toPublicGameCodeOrNull(now) }
+                            ?.distinct()
+                            .orEmpty()
+                        joinPublicCandidatesOrCreate(
+                            candidateCodes = candidateCodes,
+                            candidateIndex = 0,
+                            uid = uid,
+                            playerInitials = playerInitials,
+                            playerColor = playerColor,
+                            boardSize = boardSize,
+                            onResult = onResult,
+                        )
+                    }
+                    else -> {
+                        val exception = task.exception ?: MultiplayerException("Could not look up public games.")
+                        Log.w(MultiplayerLogTag, "Public game lookup failed", exception)
+                        onResult(Result.failure(exception))
+                    }
+                }
+            }
+    }
+
+    private fun joinPublicCandidatesOrCreate(
+        candidateCodes: List<String>,
+        candidateIndex: Int,
+        uid: String,
+        playerInitials: String,
+        playerColor: PlayerColor,
+        boardSize: BoardSize,
+        onResult: (Result<MultiplayerSession>) -> Unit,
+    ) {
+        if (candidateIndex >= candidateCodes.size) {
+            tryCreateGame(
+                uid = uid,
+                playerInitials = playerInitials,
+                playerColor = playerColor,
+                boardSize = boardSize,
+                isPublic = true,
+                attemptsLeft = MaxCreateAttempts,
+                onResult = onResult,
+            )
+            return
+        }
+
+        val code = candidateCodes[candidateIndex]
+        val rejectionReason = AtomicReference<String?>()
+        val joinedPlayerId = AtomicReference<PlayerId?>()
+        lookupRoomThenJoin(
+            roomRef = roomsRef.child(code),
+            uid = uid,
+            code = code,
+            playerInitials = playerInitials,
+            playerColor = playerColor,
+            rejectionReason = rejectionReason,
+            joinedPlayerId = joinedPlayerId,
+            joinOptions = JoinOptions(
+                allowInitialsReconnect = false,
+                requireConnectedHost = true,
+            ),
+            attemptsLeft = MaxJoinLookupAttempts,
+            onResult = { result ->
+                result
+                    .onSuccess { onResult(Result.success(it)) }
+                    .onFailure { exception ->
+                        if (exception is MultiplayerException) {
+                            publicGamesRef.child(code).removeValue()
+                            joinPublicCandidatesOrCreate(
+                                candidateCodes = candidateCodes,
+                                candidateIndex = candidateIndex + 1,
+                                uid = uid,
+                                playerInitials = playerInitials,
+                                playerColor = playerColor,
+                                boardSize = boardSize,
+                                onResult = onResult,
+                            )
+                        } else {
+                            onResult(Result.failure(exception))
+                        }
+                    }
+            },
         )
     }
 
@@ -285,6 +405,7 @@ class MultiplayerRepository(
         playerColor: PlayerColor,
         rejectionReason: AtomicReference<String?>,
         joinedPlayerId: AtomicReference<PlayerId?>,
+        joinOptions: JoinOptions,
         attemptsLeft: Int,
         onResult: (Result<MultiplayerSession>) -> Unit,
     ) {
@@ -299,6 +420,7 @@ class MultiplayerRepository(
                         playerColor = playerColor,
                         rejectionReason = rejectionReason,
                         joinedPlayerId = joinedPlayerId,
+                        joinOptions = joinOptions,
                         prefetchedRoomValue = task.result?.value,
                         emptySnapshotRetriesLeft = attemptsLeft - 1,
                         onResult = onResult,
@@ -311,6 +433,7 @@ class MultiplayerRepository(
                         playerColor = playerColor,
                         rejectionReason = rejectionReason,
                         joinedPlayerId = joinedPlayerId,
+                        joinOptions = joinOptions,
                         attemptsLeft = attemptsLeft - 1,
                         onResult = onResult,
                     )
@@ -332,6 +455,7 @@ class MultiplayerRepository(
         playerColor: PlayerColor,
         rejectionReason: AtomicReference<String?>,
         joinedPlayerId: AtomicReference<PlayerId?>,
+        joinOptions: JoinOptions,
         attemptsLeft: Int,
         onResult: (Result<MultiplayerSession>) -> Unit,
     ) {
@@ -345,6 +469,7 @@ class MultiplayerRepository(
                     playerColor = playerColor,
                     rejectionReason = rejectionReason,
                     joinedPlayerId = joinedPlayerId,
+                    joinOptions = joinOptions,
                     attemptsLeft = attemptsLeft,
                     onResult = onResult,
                 )
@@ -361,6 +486,7 @@ class MultiplayerRepository(
         playerColor: PlayerColor,
         rejectionReason: AtomicReference<String?>,
         joinedPlayerId: AtomicReference<PlayerId?>,
+        joinOptions: JoinOptions,
         prefetchedRoomValue: Any?,
         emptySnapshotRetriesLeft: Int,
         onResult: (Result<MultiplayerSession>) -> Unit,
@@ -376,7 +502,12 @@ class MultiplayerRepository(
                         rejectionReason.set(NoRoomRejectionReason)
                         return Transaction.abort()
                     }
-                    val existingPlayer = room.playerForUid(uid) ?: room.playerForInitials(playerInitials)
+                    val existingPlayer = room.playerForUid(uid)
+                        ?: if (joinOptions.allowInitialsReconnect) {
+                            room.playerForInitials(playerInitials)
+                        } else {
+                            null
+                        }
                     if (existingPlayer != null) {
                         if (existingPlayer.uid != uid && existingPlayer.connected) {
                             rejectionReason.set("That player is already connected.")
@@ -388,6 +519,10 @@ class MultiplayerRepository(
                         currentData.child("updatedAt").value = ServerValue.TIMESTAMP
                         currentData.extendExpiration()
                         return Transaction.success(currentData)
+                    }
+                    if (joinOptions.requireConnectedHost && !room.player1.connected) {
+                        rejectionReason.set("That public game is no longer waiting for a connected player.")
+                        return Transaction.abort()
                     }
                     if (room.status == MultiplayerStatus.Abandoned) {
                         rejectionReason.set("That game is no longer active.")
@@ -426,17 +561,13 @@ class MultiplayerRepository(
                             Log.w(MultiplayerLogTag, "Join room transaction failed for $code", error.toException())
                             onResult(Result.failure(error.toException()))
                         }
-                        committed -> onResult(
-                            Result.success(
-                                MultiplayerSession(
-                                    roomCode = code,
-                                    uid = uid,
-                                    localPlayerId = joinedPlayerId.get() ?: PlayerId.Player2,
-                                    roomRef = roomRef,
-                                    connectionInfoRef = database.getReference(".info/connected"),
-                                ),
-                            ),
-                        )
+                        committed -> {
+                            val localPlayerId = joinedPlayerId.get() ?: PlayerId.Player2
+                            if (localPlayerId == PlayerId.Player2) {
+                                publicGamesRef.child(code).removeValue()
+                            }
+                            onResult(Result.success(sessionFor(code, uid, localPlayerId, roomRef)))
+                        }
                         rejectionReason.get() == NoRoomRejectionReason && emptySnapshotRetriesLeft > 0 -> retryJoinLookup(
                             roomRef = roomRef,
                             uid = uid,
@@ -445,6 +576,7 @@ class MultiplayerRepository(
                             playerColor = playerColor,
                             rejectionReason = rejectionReason,
                             joinedPlayerId = joinedPlayerId,
+                            joinOptions = joinOptions,
                             attemptsLeft = emptySnapshotRetriesLeft,
                             onResult = onResult,
                         )
@@ -467,6 +599,39 @@ class MultiplayerRepository(
 
     private fun noRoomResult(code: String): Result<MultiplayerSession> =
         Result.failure(MultiplayerException("No game room exists for code $code."))
+
+    private fun publishPublicGame(
+        code: String,
+        uid: String,
+        session: MultiplayerSession,
+        onResult: (Result<MultiplayerSession>) -> Unit,
+    ) {
+        publicGamesRef.child(code).setValue(publicGameMap(code, uid))
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    onResult(Result.success(session))
+                } else {
+                    val exception = task.exception ?: MultiplayerException("Could not publish the public game.")
+                    Log.w(MultiplayerLogTag, "Publish public game failed for $code", exception)
+                    onResult(Result.failure(exception))
+                }
+            }
+    }
+
+    private fun sessionFor(
+        code: String,
+        uid: String,
+        localPlayerId: PlayerId,
+        roomRef: DatabaseReference = roomsRef.child(code),
+    ): MultiplayerSession =
+        MultiplayerSession(
+            roomCode = code,
+            uid = uid,
+            localPlayerId = localPlayerId,
+            roomRef = roomRef,
+            publicGameRef = publicGamesRef.child(code),
+            connectionInfoRef = database.getReference(".info/connected"),
+        )
 }
 
 class MultiplayerSession internal constructor(
@@ -474,6 +639,7 @@ class MultiplayerSession internal constructor(
     val uid: String,
     val localPlayerId: PlayerId,
     private val roomRef: DatabaseReference,
+    private val publicGameRef: DatabaseReference,
     private val connectionInfoRef: DatabaseReference,
 ) {
     private val playerRef: DatabaseReference = roomRef.child("players").child(localPlayerId.playerKey())
@@ -609,6 +775,9 @@ class MultiplayerSession internal constructor(
                     error?.let {
                         Log.w(MultiplayerLogTag, "Leave transaction failed for $roomCode", it.toException())
                     }
+                    if (localPlayerId == PlayerId.Player1) {
+                        publicGameRef.removeValue()
+                    }
                     onComplete()
                 }
             },
@@ -689,6 +858,7 @@ private fun initialRoomMap(
     playerInitials: String,
     playerColor: PlayerColor,
     boardSize: BoardSize,
+    isPublic: Boolean,
 ): Map<String, Any?> {
     val initialState = BoxGameState.newGame(
         player1Initials = playerInitials,
@@ -700,6 +870,7 @@ private fun initialRoomMap(
     return mapOf(
         "code" to code,
         "status" to MultiplayerStatus.Waiting.wireName,
+        "public" to isPublic,
         "hostUid" to uid,
         "guestUid" to null,
         "players" to mapOf(
@@ -716,6 +887,22 @@ private fun initialRoomMap(
         "expiresAt" to newExpirationTimestamp(),
     )
 }
+
+private data class JoinOptions(
+    val allowInitialsReconnect: Boolean = true,
+    val requireConnectedHost: Boolean = false,
+)
+
+private fun publicGameMap(
+    code: String,
+    uid: String,
+): Map<String, Any?> =
+    mapOf(
+        "code" to code,
+        "hostUid" to uid,
+        "createdAt" to ServerValue.TIMESTAMP,
+        "expiresAt" to newExpirationTimestamp(),
+    )
 
 private fun playerMap(
     uid: String,
@@ -804,7 +991,17 @@ private fun decodeMultiplayerRoom(code: String, rawValue: Any?): MultiplayerRoom
         player1 = player1,
         player2 = player2,
         gameState = state,
+        isPublic = root["public"] as? Boolean ?: false,
     )
+}
+
+private fun DataSnapshot.toPublicGameCodeOrNull(now: Long): String? {
+    val root = value.asMap() ?: return null
+    val expiresAt = root["expiresAt"].asLongOrNull() ?: return null
+    if (expiresAt < now) return null
+
+    val code = normalizeJoinCode(root["code"].asString() ?: key.orEmpty())
+    return code.takeIf { it.length == MultiplayerJoinCodeLength }
 }
 
 private fun Map<*, *>.toMultiplayerPlayer(playerId: PlayerId): MultiplayerPlayer? {

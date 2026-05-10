@@ -270,6 +270,27 @@ private fun BoxGameApp() {
                             }
                     }
                 },
+                onJoinPublicGame = {
+                    multiplayerBusy = true
+                    multiplayerMessage = "Looking for a public game..."
+                    multiplayerRepository.joinPublicGame(
+                        playerInitials = player1Initials,
+                        playerColor = player1Color,
+                        boardSize = BoardSize(boardColumns, boardRows),
+                    ) { result ->
+                        multiplayerBusy = false
+                        result
+                            .onSuccess { publicSession ->
+                                gameState = null
+                                multiplayerRoom = null
+                                multiplayerMessage = null
+                                savedMultiplayerSession = publicSession.toSavedMultiplayerSession()
+                            }
+                            .onFailure {
+                                multiplayerMessage = it.message ?: "Could not join a public game."
+                            }
+                    }
+                },
                 onJoinGame = {
                     multiplayerBusy = true
                     multiplayerMessage = null
@@ -364,6 +385,7 @@ private fun SetupScreen(
     onJoinCodeChange: (String) -> Unit,
     onStart: () -> Unit,
     onCreateGame: () -> Unit,
+    onJoinPublicGame: () -> Unit,
     onJoinGame: () -> Unit,
 ) {
     val player1ComposeColor = player1Color.toComposeColor()
@@ -455,6 +477,24 @@ private fun SetupScreen(
             ) {
                 Text(
                     text = "Create Game",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = onJoinPublicGame,
+                enabled = player1Initials.isNotBlank() && !multiplayerBusy,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = "Join Public Game",
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(vertical = 6.dp),
@@ -818,6 +858,7 @@ private fun MultiplayerGameScreen(
             statusText = when {
                 room?.status == MultiplayerStatus.Abandoned -> "Game closed"
                 room == null -> "Connecting"
+                room.isPublic -> "Waiting for public player"
                 else -> "Waiting for opponent"
             },
             message = message,
@@ -1377,6 +1418,7 @@ private fun SetupScreenPreview() {
             onJoinCodeChange={},
             onStart={},
             onCreateGame={},
+            onJoinPublicGame={},
             onJoinGame={},
         )
     }
