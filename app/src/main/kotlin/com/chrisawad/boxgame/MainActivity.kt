@@ -140,7 +140,8 @@ private fun BoxGameApp() {
     var setupMode by rememberSaveable { mutableStateOf(SetupMode.Local) }
     var player1Initials by rememberSaveable { mutableStateOf("") }
     var player2Initials by rememberSaveable { mutableStateOf("") }
-    var player1Color by rememberSaveable { mutableStateOf(PlayerColor.Red) }
+    var localPlayer1Color by rememberSaveable { mutableStateOf(PlayerColor.Red) }
+    var multiplayerPlayerColor by rememberSaveable { mutableStateOf(randomMultiplayerPlayerColor()) }
     var player2Color by rememberSaveable { mutableStateOf(PlayerColor.Blue) }
     var boardColumns by rememberSaveable { mutableIntStateOf(DefaultBoardColumns) }
     var boardRows by rememberSaveable { mutableIntStateOf(DefaultBoardRows) }
@@ -150,6 +151,12 @@ private fun BoxGameApp() {
     var multiplayerRoom by remember { mutableStateOf<MultiplayerRoom?>(null) }
     var multiplayerMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var multiplayerBusy by rememberSaveable { mutableStateOf(false) }
+    val soundEffects = rememberGameSoundEffects()
+    val previousAudibleMultiplayerRoom = remember { mutableStateOf<MultiplayerRoom?>(null) }
+    val player1Color = when (setupMode) {
+        SetupMode.Local -> localPlayer1Color
+        SetupMode.Multiplayer -> multiplayerPlayerColor
+    }
     val multiplayerRepository = remember { MultiplayerRepository() }
     val multiplayerSession = remember(savedMultiplayerSession, multiplayerRepository) {
         savedMultiplayerSession?.let { savedSession ->
@@ -163,14 +170,24 @@ private fun BoxGameApp() {
 
     DisposableEffect(multiplayerSession) {
         val session = multiplayerSession
+        previousAudibleMultiplayerRoom.value = null
         if (session == null) {
             onDispose {}
         } else {
             session.listen(
-                onRoomChanged = { room -> multiplayerRoom = room },
+                onRoomChanged = { room ->
+                    soundEffects.playMultiplayerRoomSounds(
+                        previousRoom = previousAudibleMultiplayerRoom.value,
+                        currentRoom = room,
+                        localPlayerId = session.localPlayerId,
+                    )
+                    previousAudibleMultiplayerRoom.value = room
+                    multiplayerRoom = room
+                },
                 onError = { message -> multiplayerMessage = message },
             )
             onDispose {
+                previousAudibleMultiplayerRoom.value = null
                 session.detach()
             }
         }
@@ -197,6 +214,7 @@ private fun BoxGameApp() {
                     }
                 },
                 onLeave = {
+                    soundEffects.playPlayerLeft()
                     multiplayerBusy = false
                     multiplayerMessage = null
                     session.leave {
@@ -238,17 +256,21 @@ private fun BoxGameApp() {
                 onPlayer1InitialsChange = { player1Initials = normalizeInitials(it) },
                 onPlayer2InitialsChange = { player2Initials = normalizeInitials(it) },
                 onPlayer1ColorChange = { color ->
-                    val previousColor = player1Color
-                    player1Color = color
-                    if (player2Color == color) {
-                        player2Color = previousColor
+                    if (setupMode == SetupMode.Multiplayer) {
+                        multiplayerPlayerColor = color
+                    } else {
+                        val previousColor = localPlayer1Color
+                        localPlayer1Color = color
+                        if (player2Color == color) {
+                            player2Color = previousColor
+                        }
                     }
                 },
                 onPlayer2ColorChange = { color ->
                     val previousColor = player2Color
                     player2Color = color
-                    if (player1Color == color) {
-                        player1Color = previousColor
+                    if (localPlayer1Color == color) {
+                        localPlayer1Color = previousColor
                     }
                 },
                 onBoardColumnsChange = { boardColumns = it },
@@ -296,6 +318,9 @@ private fun BoxGameApp() {
                         multiplayerBusy = false
                         result
                             .onSuccess { publicSession ->
+                                if (publicSession.localPlayerId == PlayerId.Player2) {
+                                    soundEffects.playPlayerJoined()
+                                }
                                 gameState = null
                                 multiplayerRoom = null
                                 multiplayerMessage = null
@@ -317,6 +342,7 @@ private fun BoxGameApp() {
                         multiplayerBusy = false
                         result
                             .onSuccess { joinedSession ->
+                                soundEffects.playPlayerJoined()
                                 gameState = null
                                 multiplayerRoom = null
                                 multiplayerMessage = null
@@ -332,7 +358,14 @@ private fun BoxGameApp() {
             GameScreen(
                 state = state,
                 onLineSelected = { edge ->
-                    gameState = state.placeLine(edge)
+                    val updatedState = state.placeLine(edge)
+                    if (updatedState != state) {
+                        soundEffects.playGameStateSounds(
+                            previousState = state,
+                            currentState = updatedState,
+                        )
+                        gameState = updatedState
+                    }
                 },
                 onPlayAgain = {
                     gameState = BoxGameState.newGame(
@@ -346,7 +379,7 @@ private fun BoxGameApp() {
                 onChangePlayers = {
                     player1Initials = state.player1.initials
                     player2Initials = state.player2.initials
-                    player1Color = state.player1.color
+                    localPlayer1Color = state.player1.color
                     player2Color = state.player2.color
                     boardColumns = state.boardSize.columns
                     boardRows = state.boardSize.rows
@@ -362,6 +395,9 @@ private enum class SetupMode : Parcelable {
     Local,
     Multiplayer,
 }
+
+private fun randomMultiplayerPlayerColor(): PlayerColor =
+    PlayerColor.entries.filterNot { it == PlayerColor.Red }.random()
 
 @Parcelize
 private data class SavedMultiplayerSession(
@@ -481,24 +517,6 @@ private fun SetupScreen(
             }
         } else {
             Button(
-                onClick = onCreateGame,
-                enabled = player1Initials.isNotBlank() && !multiplayerBusy,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = player1ComposeColor,
-                    contentColor = Color.White,
-                ),
-                shape = RoundedCornerShape(8.dp),
-            ) {
-                Text(
-                    text = "Create Game",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(vertical = 6.dp),
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(
                 onClick = onJoinPublicGame,
                 enabled = player1Initials.isNotBlank() && !multiplayerBusy,
                 modifier = Modifier.fillMaxWidth(),
@@ -509,7 +527,32 @@ private fun SetupScreen(
                 shape = RoundedCornerShape(8.dp),
             ) {
                 Text(
-                    text = "Join Public Game",
+                    text = "Play Public Game",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onCreateGame,
+                enabled = player1Initials.isNotBlank() && !multiplayerBusy,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = player1ComposeColor,
+                    contentColor = Color.White,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = "Create Private Game",
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(vertical = 6.dp),
@@ -541,7 +584,7 @@ private fun SetupScreen(
                 shape = RoundedCornerShape(8.dp),
             ) {
                 Text(
-                    text = "Join Game",
+                    text = "Join Private Game",
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(vertical = 6.dp),
@@ -889,10 +932,10 @@ private fun MultiplayerGameScreen(
         opponentConnected &&
         state.currentPlayerId == session.localPlayerId &&
         !state.isGameOver
+    val rematchRequester = room.selectedRematchRequester(state)
     val canRequestRematch = room.status == MultiplayerStatus.Finished &&
         opponentConnected &&
-        state.winner != null &&
-        state.winner != session.localPlayerId
+        rematchRequester == session.localPlayerId
     val rematchPromptKey = if (canRequestRematch) {
         finishedGameKey(room, state)
     } else {

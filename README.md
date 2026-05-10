@@ -33,9 +33,9 @@ Firebase docs:
 ## Testing multiplayer
 
 1. Install the app on two devices or two emulators.
-2. On device 1, enter Player 1 initials, choose a board size, and tap `Create Game`.
+2. On device 1, enter Player 1 initials, choose a board size, and tap `Create Private Game`.
 3. Share the displayed 6-character room code.
-4. On device 2, enter Player 2 initials, enter the room code, and tap `Join Game`.
+4. On device 2, enter Player 2 initials, enter the room code, and tap `Join Private Game`.
 5. Moves should appear live on both screens. Only the current player can submit a move.
 6. To test presence, close the app or disable networking on one device. The other device should show an opponent disconnected/left state.
 

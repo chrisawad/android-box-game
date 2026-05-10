@@ -59,6 +59,7 @@ data class MultiplayerRoom(
     val player2: MultiplayerPlayer?,
     val gameState: BoxGameState?,
     val isPublic: Boolean,
+    val rematchRequester: PlayerId?,
 ) {
     fun playerForUid(uid: String): MultiplayerPlayer? =
         when (uid) {
@@ -714,13 +715,20 @@ class MultiplayerSession internal constructor(
                         rejectionReason.set("That move is not valid.")
                         return Transaction.abort()
                     }
+                    val updatedStatus = if (updatedState.isGameOver) {
+                        MultiplayerStatus.Finished
+                    } else {
+                        MultiplayerStatus.Active
+                    }
+                    val rematchRequester = if (updatedStatus == MultiplayerStatus.Finished) {
+                        updatedState.pickRematchRequester()
+                    } else {
+                        null
+                    }
 
                     currentData.child("state").value = updatedState.toFirebaseStateMap()
-                    currentData.child("status").value = if (updatedState.isGameOver) {
-                        MultiplayerStatus.Finished.wireName
-                    } else {
-                        MultiplayerStatus.Active.wireName
-                    }
+                    currentData.child("status").value = updatedStatus.wireName
+                    currentData.child("rematchRequester").value = rematchRequester?.name
                     currentData.child("updatedAt").value = ServerValue.TIMESTAMP
                     currentData.extendExpiration()
                     return Transaction.success(currentData)
@@ -775,12 +783,9 @@ class MultiplayerSession internal constructor(
                         rejectionReason.set("You are not part of this game.")
                         return Transaction.abort()
                     }
-                    if (state.winner == null) {
-                        rejectionReason.set("A tied game does not have a losing player to start a rematch.")
-                        return Transaction.abort()
-                    }
-                    if (state.winner == localPlayer.playerId) {
-                        rejectionReason.set("Only the losing player can start a rematch.")
+                    val rematchRequester = room.selectedRematchRequester(state)
+                    if (rematchRequester != localPlayer.playerId) {
+                        rejectionReason.set("Only the selected player can start a rematch.")
                         return Transaction.abort()
                     }
                     if (!room.player1.connected || !player2.connected) {
@@ -797,6 +802,7 @@ class MultiplayerSession internal constructor(
                     )
                     currentData.child("state").value = rematchState.toFirebaseStateMap()
                     currentData.child("status").value = MultiplayerStatus.Active.wireName
+                    currentData.child("rematchRequester").value = null
                     currentData.child("updatedAt").value = ServerValue.TIMESTAMP
                     currentData.extendExpiration()
                     return Transaction.success(currentData)
@@ -1036,6 +1042,22 @@ private fun BoxGameState.toFirebaseStateMap(): Map<String, Any?> =
             .mapValues { (_, playerId) -> playerId.name },
     )
 
+private fun BoxGameState.pickRematchRequester(): PlayerId? =
+    winner?.next()
+        ?: if (isTie) {
+            if (Random.nextBoolean()) PlayerId.Player1 else PlayerId.Player2
+        } else {
+            null
+        }
+
+internal fun MultiplayerRoom.selectedRematchRequester(state: BoxGameState): PlayerId? =
+    rematchRequester
+        ?: state.winner?.next()
+        ?: code.stableTieRematchRequester().takeIf { state.isTie }
+
+private fun String.stableTieRematchRequester(): PlayerId =
+    if (hashCode() % 2 == 0) PlayerId.Player1 else PlayerId.Player2
+
 private fun DataSnapshot.toMultiplayerRoomOrNull(code: String): MultiplayerRoom? =
     decodeMultiplayerRoom(code, value)
 
@@ -1068,6 +1090,7 @@ private fun decodeMultiplayerRoom(code: String, rawValue: Any?): MultiplayerRoom
         player2 = player2,
         gameState = state,
         isPublic = root["public"] as? Boolean ?: false,
+        rematchRequester = PlayerId.entries.firstOrNull { it.name == root["rematchRequester"].asString() },
     )
 }
 

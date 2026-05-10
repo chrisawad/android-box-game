@@ -8,12 +8,12 @@
           <targets>
             <Target type="DEFAULT_BOOT">
               <handle>
-                <DeviceId pluginId="PhysicalDevice" identifier="serial=R52XA084XCX" />
+                <DeviceId pluginId="PhysicalDevice" identifier="serial=38051FDJG001X3" />
               </handle>
             </Target>
             <Target type="DEFAULT_BOOT">
               <handle>
-                <DeviceId pluginId="PhysicalDevice" identifier="serial=38051FDJG001X3" />
+                <DeviceId pluginId="LocalEmulator" identifier="path=C:\Users\Chris\.android\avd\Medium_Phone_2.avd" />
               </handle>
             </Target>
           </targets>
